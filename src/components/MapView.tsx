@@ -1,0 +1,807 @@
+"use client";
+
+import Image from "next/image";
+import maplibregl, { LngLatLike, Map, Marker, Popup } from "maplibre-gl";
+import { useCallback, useEffect, useRef, useState } from "react";
+import LocationSearch, { SearchResult } from "@/components/LocationSearch";
+
+const CARTO_DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const ESRI_SATELLITE_STYLE = {
+  version: 8,
+  projection: {
+    type: "globe",
+  },
+  sources: {
+    esriWorldImagery: {
+      type: "raster",
+      tiles: [
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
+      tileSize: 256,
+      attribution: "Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    },
+  },
+  layers: [
+    {
+      id: "esri-world-imagery",
+      type: "raster",
+      source: "esriWorldImagery",
+    },
+  ],
+} satisfies maplibregl.StyleSpecification;
+
+const GLOBE_PROJECTION: maplibregl.ProjectionSpecification = { type: "globe" };
+const GLOBE_ROTATION_SPEED = 0.018;
+const COUNTRY_BORDER_LAYER_PATTERN = /admin|boundary|border|country/i;
+const STATE_BORDER_LAYER_PATTERN = /admin_sub|admin-1|admin1|state|province|region|subnational/i;
+const COUNTRY_BORDER_COLOR = "#6B7280";
+const STATE_BORDER_COLOR = "#4B5563";
+const TIMELINE_SOURCE_ID = "timeline-news";
+const TIMELINE_LAYER_ID = "timeline-news-dots";
+const INITIAL_TIMELINE_DATE = "2025-08-12";
+const INITIAL_TIMELINE_HOUR = 2;
+const INITIAL_TIMELINE_MINUTE = 15;
+const TIMELINE_STEP_MINUTES = 15;
+const TIMELINE_STEP_MILLISECONDS = TIMELINE_STEP_MINUTES * 60 * 1000;
+const TIMELINE_LIMIT = 1000;
+const IST_OFFSET_MINUTES = 5 * 60 + 30;
+
+type Coordinates = {
+  lat: number;
+  lng: number;
+};
+
+type SelectedLocation = {
+  coordinates: Coordinates;
+  placeName: string;
+  source?: string;
+  url?: string;
+  tone?: number;
+};
+
+type Basemap = "dark" | "satellite";
+
+type TimelineNewsItem = {
+  id: string;
+  place: string;
+  country: string;
+  lat: number;
+  lon: number;
+  tone: number;
+  color: "red" | "yellow" | "green" | string;
+  url: string;
+  source: string;
+};
+
+type TimelineNewsFeatureProperties = {
+  id: string;
+  place: string;
+  country: string;
+  tone: number;
+  color: string;
+  url: string;
+  source: string;
+};
+
+type TimelineNewsFeatureCollection = GeoJSON.FeatureCollection<
+  GeoJSON.Point,
+  TimelineNewsFeatureProperties
+>;
+
+function formatCoordinate(value: number) {
+  return value.toFixed(6);
+}
+
+function formatTimelineTime(totalMinutes: number) {
+  const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalizedMinutes / 60);
+  const minutes = normalizedMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function formatTimelineDate(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function formatTimelineDisplayTime(totalMinutes: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(2000, 0, 1, 0, totalMinutes));
+}
+
+function formatHourWindow(hour: number) {
+  return `${formatTimelineDisplayTime(hour * 60)} - ${formatTimelineDisplayTime(hour * 60 + 59)}`;
+}
+
+function getCurrentIstTimelineSelection(now = new Date()) {
+  const istDate = new Date(now.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(istDate.getUTCDate()).padStart(2, "0");
+  const hour = istDate.getUTCHours();
+  const minute = Math.floor(istDate.getUTCMinutes() / TIMELINE_STEP_MINUTES) * TIMELINE_STEP_MINUTES;
+
+  return {
+    date: `${year}-${month}-${day}`,
+    hour,
+    minute,
+    time: formatTimelineTime(hour * 60 + minute),
+  };
+}
+
+function isValidCoordinate(lat: number, lon: number) {
+  return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+}
+
+function toTimelineGeoJson(items: TimelineNewsItem[]): TimelineNewsFeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: items
+      .filter((item) => isValidCoordinate(item.lat, item.lon))
+      .slice(0, TIMELINE_LIMIT)
+      .map((item) => ({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [item.lon, item.lat],
+        },
+        properties: {
+          id: item.id,
+          place: item.place,
+          country: item.country,
+          tone: item.tone,
+          color: item.color,
+          url: item.url,
+          source: item.source,
+        },
+      })),
+  };
+}
+
+function readTimelineFeature(feature: maplibregl.MapGeoJSONFeature | undefined) {
+  if (!feature || feature.geometry.type !== "Point" || !Array.isArray(feature.geometry.coordinates)) {
+    return null;
+  }
+
+  const [lng, lat] = feature.geometry.coordinates;
+  const properties = feature.properties ?? {};
+
+  if (
+    typeof lng !== "number" ||
+    typeof lat !== "number" ||
+    typeof properties.place !== "string" ||
+    typeof properties.source !== "string" ||
+    typeof properties.url !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    coordinates: { lng, lat },
+    placeName: properties.place,
+    source: properties.source,
+    url: properties.url,
+    tone: typeof properties.tone === "number" ? properties.tone : Number(properties.tone),
+  };
+}
+
+function applyBorderColors(map: Map) {
+  const style = map.getStyle();
+
+  style.layers?.forEach((layer) => {
+    const sourceLayer = "source-layer" in layer ? String(layer["source-layer"]) : "";
+    const searchableLayerText = `${layer.id} ${sourceLayer}`;
+
+    if (
+      layer.type !== "line" ||
+      !COUNTRY_BORDER_LAYER_PATTERN.test(searchableLayerText) ||
+      !map.getLayer(layer.id)
+    ) {
+      return;
+    }
+
+    const isStateBorder = STATE_BORDER_LAYER_PATTERN.test(searchableLayerText);
+
+    map.setPaintProperty(layer.id, "line-color", isStateBorder ? STATE_BORDER_COLOR : COUNTRY_BORDER_COLOR);
+    map.setPaintProperty(layer.id, "line-opacity", isStateBorder ? 0.72 : 0.88);
+    map.setPaintProperty(layer.id, "line-width", isStateBorder ? 0.75 : 1.1);
+  });
+}
+
+function upsertTimelineLayer(map: Map, data: TimelineNewsFeatureCollection) {
+  if (!map.isStyleLoaded()) {
+    return;
+  }
+
+  const existingSource = map.getSource(TIMELINE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+
+  if (existingSource) {
+    existingSource.setData(data);
+  } else {
+    map.addSource(TIMELINE_SOURCE_ID, {
+      type: "geojson",
+      data,
+    });
+  }
+
+  if (!map.getLayer(TIMELINE_LAYER_ID)) {
+    map.addLayer({
+      id: TIMELINE_LAYER_ID,
+      type: "circle",
+      source: TIMELINE_SOURCE_ID,
+      paint: {
+        "circle-color": [
+          "match",
+          ["get", "color"],
+          "red",
+          "#ff4d5e",
+          "green",
+          "#00e88a",
+          "yellow",
+          "#f6d44a",
+          "#67a8ff",
+        ],
+        "circle-opacity": 0.82,
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 4, 4, 7, 8, 14],
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-opacity": 0.78,
+        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 0.7, 5, 1.2],
+      },
+    });
+  }
+}
+
+export default function MapView() {
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<Map | null>(null);
+  const markerRef = useRef<Marker | null>(null);
+  const popupRef = useRef<Popup | null>(null);
+  const historicalControlsRef = useRef<HTMLDivElement | null>(null);
+  const isUserInteractingRef = useRef(false);
+  const animationFrameRef = useRef<number | null>(null);
+
+  const [basemap, setBasemap] = useState<Basemap>("dark");
+  const [detailLocation, setDetailLocation] = useState<SelectedLocation | null>(null);
+  const [speechLanguage, setSpeechLanguage] = useState("en-US");
+  const [timelineStatus, setTimelineStatus] = useState("Loading up to 1,000 timeline points...");
+  const [timelineNewsCount, setTimelineNewsCount] = useState<number | null>(null);
+  const [timelineDate, setTimelineDate] = useState(INITIAL_TIMELINE_DATE);
+  const [timelineHour, setTimelineHour] = useState(INITIAL_TIMELINE_HOUR);
+  const [timelineMinute, setTimelineMinute] = useState(INITIAL_TIMELINE_MINUTE);
+  const [activeTimelineDate, setActiveTimelineDate] = useState(INITIAL_TIMELINE_DATE);
+  const [activeTimelineTime, setActiveTimelineTime] = useState(
+    formatTimelineTime(INITIAL_TIMELINE_HOUR * 60 + INITIAL_TIMELINE_MINUTE),
+  );
+  const [timelineActivationId, setTimelineActivationId] = useState(0);
+  const [isHistoricalMachineOpen, setIsHistoricalMachineOpen] = useState(false);
+  const [isHistoricalMode, setIsHistoricalMode] = useState(false);
+  const [isTimelineInitialized, setIsTimelineInitialized] = useState(false);
+  const timelineDataRef = useRef<TimelineNewsFeatureCollection | null>(null);
+  const timelineSlots = Array.from({ length: 4 }, (_, index) =>
+    formatTimelineTime(timelineHour * 60 + index * TIMELINE_STEP_MINUTES),
+  );
+
+  useEffect(() => {
+    function closeHistoricalMachine(event: PointerEvent) {
+      if (
+        historicalControlsRef.current &&
+        !historicalControlsRef.current.contains(event.target as Node)
+      ) {
+        setIsHistoricalMachineOpen(false);
+      }
+    }
+
+    function closeHistoricalMachineWithEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsHistoricalMachineOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeHistoricalMachine);
+    document.addEventListener("keydown", closeHistoricalMachineWithEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeHistoricalMachine);
+      document.removeEventListener("keydown", closeHistoricalMachineWithEscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isHistoricalMode) {
+      return;
+    }
+
+    let refreshTimer: number | undefined;
+
+    function syncToCurrentIstSlot() {
+      const current = getCurrentIstTimelineSelection();
+      setTimelineDate(current.date);
+      setTimelineHour(current.hour);
+      setTimelineMinute(current.minute);
+      setActiveTimelineDate(current.date);
+      setActiveTimelineTime(current.time);
+      setTimelineActivationId((activationId) => activationId + 1);
+      setIsTimelineInitialized(true);
+    }
+
+    function scheduleNextSlot() {
+      const delay = TIMELINE_STEP_MILLISECONDS - (Date.now() % TIMELINE_STEP_MILLISECONDS) + 500;
+      refreshTimer = window.setTimeout(() => {
+        syncToCurrentIstSlot();
+        scheduleNextSlot();
+      }, delay);
+    }
+
+    syncToCurrentIstSlot();
+    scheduleNextSlot();
+
+    return () => {
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+    };
+  }, [isHistoricalMode]);
+
+  const showPopup = useCallback((location: SelectedLocation) => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    popupRef.current?.remove();
+    popupRef.current = new maplibregl.Popup({ offset: 28, closeButton: false })
+      .setLngLat([location.coordinates.lng, location.coordinates.lat])
+      .setHTML(
+        `<div class="popup-title">${location.placeName}</div>${
+          location.source ? `<div class="popup-source">${location.source}</div>` : ""
+        }<div class="popup-coords">${formatCoordinate(
+          location.coordinates.lat,
+        )}, ${formatCoordinate(location.coordinates.lng)}</div>`,
+      )
+      .addTo(map);
+  }, []);
+
+  const selectCoordinates = useCallback(
+    async (lng: number, lat: number, knownPlaceName?: string, openDetails = false) => {
+      const map = mapRef.current;
+      if (!map) {
+        return;
+      }
+
+      isUserInteractingRef.current = true;
+
+      const coordinates: Coordinates = { lng, lat };
+      const markerPosition: LngLatLike = [lng, lat];
+
+      markerRef.current?.remove();
+      markerRef.current = new maplibregl.Marker({ color: "#42e8c4" })
+        .setLngLat(markerPosition)
+        .addTo(map);
+
+      try {
+        let placeName = knownPlaceName;
+
+        if (!placeName) {
+          const response = await fetch(`/api/reverse-geocode?lng=${lng}&lat=${lat}`);
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.error ?? "Reverse geocoding failed.");
+          }
+
+          placeName = payload.result?.placeName ?? "Unknown location";
+        }
+
+        const nextLocation = { coordinates, placeName: placeName ?? "Unknown location" };
+        showPopup(nextLocation);
+
+        if (openDetails) {
+          setDetailLocation(nextLocation);
+        }
+      } catch {
+        const fallbackLocation = { coordinates, placeName: "Address unavailable" };
+        showPopup(fallbackLocation);
+
+        if (openDetails) {
+          setDetailLocation(fallbackLocation);
+        }
+      }
+    },
+    [showPopup],
+  );
+
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) {
+      return;
+    }
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: CARTO_DARK_STYLE,
+      center: [0, 20],
+      zoom: 1.97,
+      pitch: 12,
+      attributionControl: false,
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+    map.addControl(new maplibregl.GlobeControl(), "bottom-right");
+    map.doubleClickZoom.disable();
+
+    map.on("style.load", () => {
+      map.setProjection(GLOBE_PROJECTION);
+      applyBorderColors(map);
+
+      if (timelineDataRef.current) {
+        upsertTimelineLayer(map, timelineDataRef.current);
+      }
+    });
+
+    map.on("dragstart", () => {
+      isUserInteractingRef.current = true;
+    });
+
+    map.on("pitchstart", () => {
+      isUserInteractingRef.current = true;
+    });
+
+    map.on("rotatestart", () => {
+      isUserInteractingRef.current = true;
+    });
+
+    map.on("zoomstart", () => {
+      isUserInteractingRef.current = true;
+    });
+
+    map.on("click", (event) => {
+      if (map.getLayer(TIMELINE_LAYER_ID)) {
+        const timelineFeatures = map.queryRenderedFeatures(event.point, {
+          layers: [TIMELINE_LAYER_ID],
+        });
+        const selectedNewsLocation = readTimelineFeature(timelineFeatures[0]);
+
+        if (selectedNewsLocation) {
+          showPopup(selectedNewsLocation);
+          setDetailLocation(selectedNewsLocation);
+          return;
+        }
+      }
+
+      void selectCoordinates(event.lngLat.lng, event.lngLat.lat);
+    });
+
+    map.on("dblclick", (event) => {
+      void selectCoordinates(event.lngLat.lng, event.lngLat.lat, undefined, true);
+    });
+
+    map.on("mousemove", (event) => {
+      const hasTimelineFeature =
+        map.getLayer(TIMELINE_LAYER_ID) &&
+        map.queryRenderedFeatures(event.point, { layers: [TIMELINE_LAYER_ID] }).length > 0;
+
+      map.getCanvas().style.cursor = hasTimelineFeature ? "pointer" : "";
+    });
+
+    mapRef.current = map;
+
+    const revolveGlobe = () => {
+      const activeMap = mapRef.current;
+
+      if (activeMap && !isUserInteractingRef.current && activeMap.getZoom() < 4) {
+        const center = activeMap.getCenter();
+        center.lng -= GLOBE_ROTATION_SPEED;
+        activeMap.setCenter(center);
+      }
+
+      animationFrameRef.current = window.requestAnimationFrame(revolveGlobe);
+    };
+
+    animationFrameRef.current = window.requestAnimationFrame(revolveGlobe);
+
+    return () => {
+      if (animationFrameRef.current) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      markerRef.current?.remove();
+      popupRef.current?.remove();
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [selectCoordinates, showPopup]);
+
+  useEffect(() => {
+    if (!isTimelineInitialized) {
+      return;
+    }
+
+    let ignore = false;
+    const abortController = new AbortController();
+
+    async function loadTimelineNews() {
+      try {
+        setTimelineStatus("Loading selected timeline points...");
+        const query = new URLSearchParams({ date: activeTimelineDate, time: activeTimelineTime });
+        const response = await fetch(`/api/timeline-news?${query}`, {
+          signal: abortController.signal,
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Timeline news request failed.");
+        }
+
+        const timelineData = toTimelineGeoJson(payload.data ?? []);
+
+        if (ignore) {
+          return;
+        }
+
+        timelineDataRef.current = timelineData;
+        setTimelineNewsCount(timelineData.features.length);
+        setTimelineStatus(`${timelineData.features.length} timeline points loaded`);
+
+        if (mapRef.current) {
+          upsertTimelineLayer(mapRef.current, timelineData);
+        }
+      } catch (error) {
+        if (!ignore && !(error instanceof DOMException && error.name === "AbortError")) {
+          setTimelineNewsCount(null);
+          setTimelineStatus("Timeline points unavailable");
+        }
+      }
+    }
+
+    void loadTimelineNews();
+
+    return () => {
+      ignore = true;
+      abortController.abort();
+    };
+  }, [activeTimelineDate, activeTimelineTime, timelineActivationId, isTimelineInitialized]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    map.setStyle(basemap === "dark" ? CARTO_DARK_STYLE : ESRI_SATELLITE_STYLE);
+    map.once("style.load", () => {
+      map.setProjection(GLOBE_PROJECTION);
+      applyBorderColors(map);
+
+      if (timelineDataRef.current) {
+        upsertTimelineLayer(map, timelineDataRef.current);
+      }
+    });
+  }, [basemap]);
+
+  function handleSearchResult(result: SearchResult) {
+    const map = mapRef.current;
+    const [lng, lat] = result.center;
+
+    isUserInteractingRef.current = true;
+
+    map?.flyTo({
+      center: [lng, lat],
+      zoom: 12,
+      essential: true,
+    });
+
+    void selectCoordinates(lng, lat, result.placeName, true);
+  }
+
+  function speakLocationName() {
+    if (!detailLocation || typeof window === "undefined" || !window.speechSynthesis) {
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(detailLocation.placeName);
+    utterance.lang = speechLanguage;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  return (
+    <main className="map-shell">
+      <div ref={mapContainerRef} className="map-canvas" aria-label="Interactive OSIRIS map" />
+
+      <section className="news-count-card" aria-label="News available on globe" aria-live="polite">
+        <span className="news-count-indicator" aria-hidden="true" />
+        <div className="news-count-content">
+          <span className="news-count-label">News on globe</span>
+          <strong className="news-count-value">
+            {timelineNewsCount === null ? "--" : timelineNewsCount.toLocaleString()}
+          </strong>
+          <span className="news-count-caption">
+            {timelineNewsCount === null ? "Loading live coverage" : "Total stories available"}
+          </span>
+        </div>
+      </section>
+
+      <div className="top-left-tools">
+        <LocationSearch onResult={handleSearchResult} basemap={basemap} onBasemapChange={setBasemap} />
+        <div className="timeline-status" aria-live="polite">
+          {timelineStatus}
+        </div>
+      </div>
+
+      <div className="historical-footer" ref={historicalControlsRef}>
+        <button
+          className={`historical-trigger ${isHistoricalMachineOpen ? "is-open" : ""}`}
+          type="button"
+          aria-label="Choose historical date and time"
+          aria-expanded={isHistoricalMachineOpen}
+          onClick={() => setIsHistoricalMachineOpen((isOpen) => !isOpen)}
+        >
+          <span className="historical-clock-icon" aria-hidden="true" />
+        </button>
+
+        <section
+          className={`historical-machine ${isHistoricalMachineOpen ? "is-open" : ""}`}
+          aria-label="Historical news controls"
+          aria-hidden={!isHistoricalMachineOpen}
+        >
+          <div className="historical-machine-title">
+            <span className="historical-calendar-icon" aria-hidden="true" />
+            <span>Historical machine</span>
+          </div>
+          <label className="historical-field">
+            <span>Select date</span>
+            <input
+              type="date"
+              tabIndex={isHistoricalMachineOpen ? 0 : -1}
+              value={timelineDate}
+              onChange={(event) => {
+                if (event.target.value) {
+                  setTimelineDate(event.target.value);
+                }
+              }}
+            />
+          </label>
+          <label className="historical-field">
+            <span>IST window</span>
+            <select
+              value={timelineHour}
+              tabIndex={isHistoricalMachineOpen ? 0 : -1}
+              onChange={(event) => setTimelineHour(Number(event.target.value))}
+            >
+              {Array.from({ length: 24 }, (_, hour) => (
+                <option key={hour} value={hour}>
+                  {formatHourWindow(hour)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="historical-activate"
+            type="button"
+            tabIndex={isHistoricalMachineOpen ? 0 : -1}
+            onClick={() => {
+              setActiveTimelineDate(timelineDate);
+              setActiveTimelineTime(formatTimelineTime(timelineHour * 60 + timelineMinute));
+              setIsHistoricalMode(true);
+              setTimelineActivationId((activationId) => activationId + 1);
+              setIsHistoricalMachineOpen(false);
+            }}
+          >
+            Activate
+          </button>
+        </section>
+
+        <section className="timeline-control" aria-label="News timeline controls">
+          <div className="timeline-control-header">
+            <span className="timeline-control-eyebrow">Timeline</span>
+            <time dateTime={`${activeTimelineDate}T${activeTimelineTime}`}>
+              {isHistoricalMode ? "Historical" : "Live"} /{" "}
+              {formatTimelineDate(activeTimelineDate)} / {formatTimelineDisplayTime(
+                Number(activeTimelineTime.slice(0, 2)) * 60 + Number(activeTimelineTime.slice(3)),
+              )} IST
+            </time>
+          </div>
+          <div className="timeline-slots" role="group" aria-label="Select a 15-minute time slot">
+            {timelineSlots.map((slot, index) => (
+              <button
+                className={timelineMinute === index * TIMELINE_STEP_MINUTES ? "is-active" : ""}
+                key={slot}
+                type="button"
+                aria-pressed={timelineMinute === index * TIMELINE_STEP_MINUTES}
+                onClick={() => setTimelineMinute(index * TIMELINE_STEP_MINUTES)}
+              >
+                {slot}
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      {detailLocation ? (
+        <section className="location-card" aria-label="Location intelligence card">
+          <div className="location-card-header">
+            <h1>{detailLocation.placeName}</h1>
+            <div className="location-card-tools">
+              <button
+                className="location-voice-button"
+                type="button"
+                aria-label="Read location name"
+                onClick={speakLocationName}
+              >
+                <Image src="/mic.png" alt="" width={26} height={26} aria-hidden="true" />
+              </button>
+              <select
+                className="location-language-select"
+                aria-label="Voice language"
+                value={speechLanguage}
+                onChange={(event) => setSpeechLanguage(event.target.value)}
+              >
+                <option value="en-US">EN</option>
+                <option value="hi-IN">HI</option>
+                <option value="ur-PK">UR</option>
+                <option value="ar-SA">AR</option>
+              </select>
+              <button
+                className="location-card-close"
+                type="button"
+                aria-label="Close location card"
+                onClick={() => setDetailLocation(null)}
+              >
+                x
+              </button>
+            </div>
+          </div>
+
+          <div className="location-card-image" aria-hidden="true" />
+
+          <div className="location-card-body">
+            <div className="location-card-section">
+              <div className="location-card-label">What happened</div>
+              <p>
+                {detailLocation.source
+                  ? `Timeline news point from ${detailLocation.source}.`
+                  : "Location selected on the OSIRIS globe and resolved through Mapbox geocoding."}
+              </p>
+            </div>
+
+            <div className="location-card-section">
+              <div className="location-card-label">Why it matters</div>
+              <p>
+                {typeof detailLocation.tone === "number"
+                  ? `GDELT tone score: ${detailLocation.tone.toFixed(2)}. Use this point for geographic review and source checking.`
+                  : "Use this point for geographic review, source checking, and follow-up location analysis."}
+              </p>
+            </div>
+
+            <div className="location-card-section">
+              <div className="location-card-label">Where</div>
+              <p>{detailLocation.placeName}</p>
+              <div className="location-card-coordinates">
+                {formatCoordinate(detailLocation.coordinates.lat)},{" "}
+                {formatCoordinate(detailLocation.coordinates.lng)}
+              </div>
+            </div>
+          </div>
+
+          <a
+            className="location-card-action"
+            href={
+              detailLocation.url ??
+              `https://www.openstreetmap.org/?mlat=${detailLocation.coordinates.lat}&mlon=${detailLocation.coordinates.lng}#map=12/${detailLocation.coordinates.lat}/${detailLocation.coordinates.lng}`
+            }
+            target="_blank"
+            rel="noreferrer"
+          >
+            {detailLocation.url ? "Open source" : "Open location"}
+          </a>
+        </section>
+      ) : null}
+    </main>
+  );
+}
