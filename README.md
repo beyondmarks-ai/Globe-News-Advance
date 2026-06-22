@@ -1,6 +1,6 @@
-# OSIRIS Globe News
+# Globe News
 
-OSIRIS Globe News is an interactive 3D news-intelligence globe built with Next.js and MapLibre GL. It plots geolocated timeline stories, supports live 15-minute updates, and lets users inspect historical one-hour windows.
+Globe News is an interactive 3D news-intelligence globe built with Next.js and MapLibre GL. It plots geolocated timeline stories, supports live 15-minute updates, and lets users inspect historical one-hour windows.
 
 ## Features
 
