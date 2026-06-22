@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const TIMELINE_NEWS_URL =
   "https://gdelt-live-updater-bqgza4a6b2gqakdc.southeastasia-01.azurewebsites.net/api/timeline_news";
-const DEFAULT_DATE = "2025-08-12";
+const DEFAULT_DATE = "2026-06-20";
 const DEFAULT_TIME = "02:15";
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/;

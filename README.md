@@ -24,7 +24,7 @@ https://gdelt-live-updater-bqgza4a6b2gqakdc.southeastasia-01.azurewebsites.net/a
 Request format:
 
 ```text
-https://gdelt-live-updater-bqgza4a6b2gqakdc.southeastasia-01.azurewebsites.net/api/timeline_news?code=<TIMELINE_NEWS_CODE>&date=2025-08-12&time=02:15&limit=1000
+https://gdelt-live-updater-bqgza4a6b2gqakdc.southeastasia-01.azurewebsites.net/api/timeline_news?code=<TIMELINE_NEWS_CODE>&date=2026-06-20&time=02:15&limit=1000
 ```
 
 | Parameter | Format | Description |
@@ -67,6 +67,9 @@ Do not commit the real `TIMELINE_NEWS_CODE`. Azure function codes grant access t
    ```env
    MAPBOX_ACCESS_TOKEN=your_mapbox_token_here
    TIMELINE_NEWS_CODE=your_timeline_news_code_here
+   FIRECRAWL_API_KEY=your_firecrawl_api_key_here
+   AZURE_OPENAI_CHAT_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment/chat/completions?api-version=2025-01-01-preview
+   AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
    ```
 
 3. Start the development server:
@@ -81,7 +84,7 @@ Environment files containing real credentials are excluded by `.gitignore`.
 
 ## Timeline Behavior
 
-On initial load, the app calculates the current IST time and rounds it down to the nearest 15-minute slot. It fetches that slot immediately and refreshes at the next quarter-hour boundary.
+On initial load, the app calculates the previous completed 15-minute slot in IST. It converts that selection to the UTC timestamp required by GDELT, fetches it immediately, and refreshes at the next quarter-hour boundary.
 
 Opening the clock control allows a user to choose:
 
@@ -96,6 +99,7 @@ Changes remain pending until `ACTIVATE` is pressed. Activating a historical sele
 | Route | Purpose |
 | --- | --- |
 | `GET /api/timeline-news?date=YYYY-MM-DD&time=HH:mm` | Validates and proxies timeline requests |
+| `POST /api/article-details` | Crawls a selected news URL and generates structured article details |
 | `GET /api/geocode?query=<place>` | Finds a location through Mapbox |
 | `GET /api/reverse-geocode?lng=<lng>&lat=<lat>` | Resolves coordinates through Mapbox |
 

@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Link from "next/link";
 import maplibregl, { LngLatLike, Map, Marker, Popup } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import LocationSearch, { SearchResult } from "@/components/LocationSearch";
@@ -38,7 +38,7 @@ const COUNTRY_BORDER_COLOR = "#6B7280";
 const STATE_BORDER_COLOR = "#4B5563";
 const TIMELINE_SOURCE_ID = "timeline-news";
 const TIMELINE_LAYER_ID = "timeline-news-dots";
-const INITIAL_TIMELINE_DATE = "2025-08-12";
+const INITIAL_TIMELINE_DATE = "2026-06-20";
 const INITIAL_TIMELINE_HOUR = 2;
 const INITIAL_TIMELINE_MINUTE = 15;
 const TIMELINE_STEP_MINUTES = 15;
@@ -58,6 +58,19 @@ type SelectedLocation = {
   url?: string;
   tone?: number;
 };
+
+type ArticleDetails = {
+  title: string;
+  emoji: string;
+  whatHappened: string;
+  when: string;
+  why: string;
+  how: string;
+  where: string;
+  imageUrl: string | null;
+};
+
+type ArticleLoadState = "idle" | "loading" | "ready" | "error";
 
 type Basemap = "dark" | "satellite";
 
@@ -121,7 +134,8 @@ function formatHourWindow(hour: number) {
 }
 
 function getCurrentIstTimelineSelection(now = new Date()) {
-  const istDate = new Date(now.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
+  const lastCompletedSlot = now.getTime() - TIMELINE_STEP_MILLISECONDS;
+  const istDate = new Date(lastCompletedSlot + IST_OFFSET_MINUTES * 60 * 1000);
   const year = istDate.getUTCFullYear();
   const month = String(istDate.getUTCMonth() + 1).padStart(2, "0");
   const day = String(istDate.getUTCDate()).padStart(2, "0");
@@ -133,6 +147,21 @@ function getCurrentIstTimelineSelection(now = new Date()) {
     hour,
     minute,
     time: formatTimelineTime(hour * 60 + minute),
+  };
+}
+
+function convertIstSelectionToUtc(date: string, time: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const utcDate = new Date(
+    Date.UTC(year, month - 1, day, hour, minute) - IST_OFFSET_MINUTES * 60 * 1000,
+  );
+
+  return {
+    date: `${utcDate.getUTCFullYear()}-${String(utcDate.getUTCMonth() + 1).padStart(2, "0")}-${String(
+      utcDate.getUTCDate(),
+    ).padStart(2, "0")}`,
+    time: formatTimelineTime(utcDate.getUTCHours() * 60 + utcDate.getUTCMinutes()),
   };
 }
 
@@ -266,9 +295,14 @@ export default function MapView() {
   const historicalControlsRef = useRef<HTMLDivElement | null>(null);
   const isUserInteractingRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
+  const articleRequestRef = useRef(0);
+  const selectedLanguageRef = useRef("en-US");
 
   const [basemap, setBasemap] = useState<Basemap>("dark");
   const [detailLocation, setDetailLocation] = useState<SelectedLocation | null>(null);
+  const [articleDetails, setArticleDetails] = useState<ArticleDetails | null>(null);
+  const [articleLoadState, setArticleLoadState] = useState<ArticleLoadState>("idle");
+  const [articleError, setArticleError] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("en-US");
   const [timelineStatus, setTimelineStatus] = useState("Loading up to 1,000 timeline points...");
   const [timelineNewsCount, setTimelineNewsCount] = useState<number | null>(null);
@@ -287,6 +321,7 @@ export default function MapView() {
   const timelineSlots = Array.from({ length: 4 }, (_, index) =>
     formatTimelineTime(timelineHour * 60 + index * TIMELINE_STEP_MINUTES),
   );
+  const isRightToLeftArticle = speechLanguage === "ur-PK" || speechLanguage === "ar-SA";
 
   useEffect(() => {
     function closeHistoricalMachine(event: PointerEvent) {
@@ -417,6 +452,37 @@ export default function MapView() {
     [showPopup],
   );
 
+  const loadArticleDetails = useCallback(async (url: string, language = "en-US") => {
+    const requestId = articleRequestRef.current + 1;
+    articleRequestRef.current = requestId;
+    setArticleDetails(null);
+    setArticleError("");
+    setArticleLoadState("loading");
+
+    try {
+      const response = await fetch("/api/article-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, language }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to load this article.");
+      }
+
+      if (articleRequestRef.current === requestId) {
+        setArticleDetails(payload as ArticleDetails);
+        setArticleLoadState("ready");
+      }
+    } catch (error) {
+      if (articleRequestRef.current === requestId) {
+        setArticleError(error instanceof Error ? error.message : "Unable to load this article.");
+        setArticleLoadState("error");
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return;
@@ -430,10 +496,6 @@ export default function MapView() {
       pitch: 12,
       attributionControl: false,
     });
-
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
-    map.addControl(new maplibregl.GlobeControl(), "bottom-right");
-    map.doubleClickZoom.disable();
 
     map.on("style.load", () => {
       map.setProjection(GLOBE_PROJECTION);
@@ -468,17 +530,13 @@ export default function MapView() {
         const selectedNewsLocation = readTimelineFeature(timelineFeatures[0]);
 
         if (selectedNewsLocation) {
-          showPopup(selectedNewsLocation);
+          popupRef.current?.remove();
+          popupRef.current = null;
           setDetailLocation(selectedNewsLocation);
+          void loadArticleDetails(selectedNewsLocation.url, selectedLanguageRef.current);
           return;
         }
       }
-
-      void selectCoordinates(event.lngLat.lng, event.lngLat.lat);
-    });
-
-    map.on("dblclick", (event) => {
-      void selectCoordinates(event.lngLat.lng, event.lngLat.lat, undefined, true);
     });
 
     map.on("mousemove", (event) => {
@@ -515,7 +573,7 @@ export default function MapView() {
       map.remove();
       mapRef.current = null;
     };
-  }, [selectCoordinates, showPopup]);
+  }, [loadArticleDetails]);
 
   useEffect(() => {
     if (!isTimelineInitialized) {
@@ -528,7 +586,8 @@ export default function MapView() {
     async function loadTimelineNews() {
       try {
         setTimelineStatus("Loading selected timeline points...");
-        const query = new URLSearchParams({ date: activeTimelineDate, time: activeTimelineTime });
+        const utcSelection = convertIstSelectionToUtc(activeTimelineDate, activeTimelineTime);
+        const query = new URLSearchParams(utcSelection);
         const response = await fetch(`/api/timeline-news?${query}`, {
           signal: abortController.signal,
         });
@@ -546,7 +605,11 @@ export default function MapView() {
 
         timelineDataRef.current = timelineData;
         setTimelineNewsCount(timelineData.features.length);
-        setTimelineStatus(`${timelineData.features.length} timeline points loaded`);
+        setTimelineStatus(
+          timelineData.features.length === 0 && payload.message
+            ? payload.message
+            : `${timelineData.features.length} timeline points loaded`,
+        );
 
         if (mapRef.current) {
           upsertTimelineLayer(mapRef.current, timelineData);
@@ -589,6 +652,10 @@ export default function MapView() {
     const [lng, lat] = result.center;
 
     isUserInteractingRef.current = true;
+    articleRequestRef.current += 1;
+    setArticleDetails(null);
+    setArticleError("");
+    setArticleLoadState("idle");
 
     map?.flyTo({
       center: [lng, lat],
@@ -599,13 +666,23 @@ export default function MapView() {
     void selectCoordinates(lng, lat, result.placeName, true);
   }
 
-  function speakLocationName() {
+  function speakNewsSummary() {
     if (!detailLocation || typeof window === "undefined" || !window.speechSynthesis) {
       return;
     }
 
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(detailLocation.placeName);
+    const speechText = articleDetails
+      ? [
+          articleDetails.title,
+          articleDetails.whatHappened,
+          articleDetails.when,
+          articleDetails.why,
+          articleDetails.how,
+          articleDetails.where,
+        ].join(". ")
+      : detailLocation.placeName;
+    const utterance = new SpeechSynthesisUtterance(speechText);
     utterance.lang = speechLanguage;
     window.speechSynthesis.speak(utterance);
   }
@@ -625,7 +702,33 @@ export default function MapView() {
             {timelineNewsCount === null ? "Loading live coverage" : "Total stories available"}
           </span>
         </div>
+        <div className="news-tone-legend" aria-label="News dot tone legend">
+          <span className="news-tone-legend-title">Dot tone</span>
+          <span className="news-tone-item">
+            <span className="news-tone-dot is-negative" aria-hidden="true" /> Negative
+          </span>
+          <span className="news-tone-item">
+            <span className="news-tone-dot is-neutral" aria-hidden="true" /> Neutral
+          </span>
+          <span className="news-tone-item">
+            <span className="news-tone-dot is-positive" aria-hidden="true" /> Positive
+          </span>
+        </div>
       </section>
+
+      <Link
+        className="grid-news-button"
+        href={`/grid-news?date=${activeTimelineDate}&time=${activeTimelineTime}`}
+        aria-label="Open grid news"
+      >
+        <span className="grid-news-icon" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+        </span>
+        <span>Grid News</span>
+      </Link>
 
       <div className="top-left-tools">
         <LocationSearch onResult={handleSearchResult} basemap={basemap} onBasemapChange={setBasemap} />
@@ -724,68 +827,154 @@ export default function MapView() {
       </div>
 
       {detailLocation ? (
-        <section className="location-card" aria-label="Location intelligence card">
+        <section
+          className={`location-card${detailLocation.source ? " location-card--news" : ""}`}
+          aria-label="Location intelligence card"
+        >
+          {detailLocation.source && articleLoadState === "loading" ? (
+            <div className="location-card-skeleton" role="status" aria-label="Loading article">
+              <div className="location-card-skeleton-header">
+                <span className="skeleton-block skeleton-title" />
+                <button
+                  className="location-card-close skeleton-close"
+                  type="button"
+                  aria-label="Close loading article"
+                  onClick={() => {
+                    articleRequestRef.current += 1;
+                    setDetailLocation(null);
+                    setArticleDetails(null);
+                    setArticleLoadState("idle");
+                  }}
+                >
+                  <span className="location-card-close-icon" aria-hidden="true" />
+                </button>
+              </div>
+              <div className="skeleton-block skeleton-image" />
+              <div className="location-card-skeleton-body">
+                <span className="skeleton-block skeleton-label" />
+                <span className="skeleton-block skeleton-line" />
+                <span className="skeleton-block skeleton-line skeleton-line-short" />
+                <span className="skeleton-block skeleton-label" />
+                <span className="skeleton-block skeleton-line" />
+                <span className="skeleton-block skeleton-line skeleton-line-medium" />
+                <span className="skeleton-block skeleton-action" />
+              </div>
+            </div>
+          ) : null}
           <div className="location-card-header">
-            <h1>{detailLocation.placeName}</h1>
+            <h1 dir={isRightToLeftArticle ? "rtl" : "ltr"}>
+              {articleDetails?.title ?? detailLocation.placeName}
+              {articleDetails ? <span className="location-card-emoji">{articleDetails.emoji}</span> : null}
+            </h1>
             <div className="location-card-tools">
               <button
                 className="location-voice-button"
                 type="button"
-                aria-label="Read location name"
-                onClick={speakLocationName}
+                aria-label="Read news summary aloud"
+                onClick={speakNewsSummary}
               >
-                <Image src="/mic.png" alt="" width={26} height={26} aria-hidden="true" />
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V6a3.75 3.75 0 0 0-7.5 0v5.5A3.75 3.75 0 0 0 12 15.25Z" />
+                  <path d="M5.75 10.75v.75a6.25 6.25 0 0 0 12.5 0v-.75M12 17.75V21M9.25 21h5.5" />
+                </svg>
               </button>
               <select
                 className="location-language-select"
-                aria-label="Voice language"
+                aria-label="News language"
                 value={speechLanguage}
-                onChange={(event) => setSpeechLanguage(event.target.value)}
+                onChange={(event) => {
+                  const language = event.target.value;
+                  selectedLanguageRef.current = language;
+                  setSpeechLanguage(language);
+
+                  if (detailLocation.url) {
+                    void loadArticleDetails(detailLocation.url, language);
+                  }
+                }}
               >
-                <option value="en-US">EN</option>
-                <option value="hi-IN">HI</option>
-                <option value="ur-PK">UR</option>
-                <option value="ar-SA">AR</option>
+                <option value="en-US">English</option>
+                <option value="hi-IN">हिन्दी</option>
+                <option value="ur-PK">اردو</option>
+                <option value="ar-SA">العربية</option>
+                <option value="bn-IN">বাংলা</option>
+                <option value="ta-IN">தமிழ்</option>
+                <option value="te-IN">తెలుగు</option>
+                <option value="mr-IN">मराठी</option>
+                <option value="gu-IN">ગુજરાતી</option>
+                <option value="pa-IN">ਪੰਜਾਬੀ</option>
+                <option value="es-ES">Español</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="pt-BR">Português</option>
+                <option value="zh-CN">中文</option>
+                <option value="ja-JP">日本語</option>
+                <option value="ko-KR">한국어</option>
               </select>
               <button
                 className="location-card-close"
                 type="button"
                 aria-label="Close location card"
-                onClick={() => setDetailLocation(null)}
+                onClick={() => {
+                  articleRequestRef.current += 1;
+                  setDetailLocation(null);
+                  setArticleDetails(null);
+                  setArticleLoadState("idle");
+                }}
               >
-                x
+                <span className="location-card-close-icon" aria-hidden="true" />
               </button>
             </div>
           </div>
 
-          <div className="location-card-image" aria-hidden="true" />
+          <div className="location-card-image">
+            {articleDetails?.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={articleDetails.imageUrl} alt="" />
+            ) : null}
+          </div>
 
           <div className="location-card-body">
             <div className="location-card-section">
               <div className="location-card-label">What happened</div>
-              <p>
-                {detailLocation.source
-                  ? `Timeline news point from ${detailLocation.source}.`
-                  : "Location selected on the OSIRIS globe and resolved through Mapbox geocoding."}
-              </p>
+              {articleLoadState === "ready" && articleDetails ? (
+                <p dir={isRightToLeftArticle ? "rtl" : "ltr"}>{articleDetails.whatHappened}</p>
+              ) : articleLoadState === "loading" ? (
+                <p>Loading article.</p>
+              ) : articleLoadState === "error" ? (
+                <p className="location-card-error">{articleError}</p>
+              ) : (
+                <p>
+                  {detailLocation.source
+                    ? `Timeline news point from ${detailLocation.source}.`
+                    : "Location selected on the OSIRIS globe and resolved through Mapbox geocoding."}
+                </p>
+              )}
             </div>
 
-            <div className="location-card-section">
-              <div className="location-card-label">Why it matters</div>
-              <p>
-                {typeof detailLocation.tone === "number"
-                  ? `GDELT tone score: ${detailLocation.tone.toFixed(2)}. Use this point for geographic review and source checking.`
-                  : "Use this point for geographic review, source checking, and follow-up location analysis."}
-              </p>
-            </div>
+            {articleDetails ? (
+              <>
+                <div className="location-card-section">
+                  <div className="location-card-label">When</div>
+                  <p dir={isRightToLeftArticle ? "rtl" : "ltr"}>{articleDetails.when}</p>
+                </div>
+
+                <div className="location-card-section">
+                  <div className="location-card-label">Why</div>
+                  <p dir={isRightToLeftArticle ? "rtl" : "ltr"}>{articleDetails.why}</p>
+                </div>
+
+                <div className="location-card-section">
+                  <div className="location-card-label">How</div>
+                  <p dir={isRightToLeftArticle ? "rtl" : "ltr"}>{articleDetails.how}</p>
+                </div>
+              </>
+            ) : null}
 
             <div className="location-card-section">
               <div className="location-card-label">Where</div>
-              <p>{detailLocation.placeName}</p>
-              <div className="location-card-coordinates">
-                {formatCoordinate(detailLocation.coordinates.lat)},{" "}
-                {formatCoordinate(detailLocation.coordinates.lng)}
-              </div>
+              <p dir={isRightToLeftArticle ? "rtl" : "ltr"}>
+                {articleDetails?.where ?? detailLocation.placeName}
+              </p>
             </div>
           </div>
 
