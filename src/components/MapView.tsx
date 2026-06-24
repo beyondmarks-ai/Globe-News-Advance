@@ -37,7 +37,9 @@ const STATE_BORDER_LAYER_PATTERN = /admin_sub|admin-1|admin1|state|province|regi
 const COUNTRY_BORDER_COLOR = "#6B7280";
 const STATE_BORDER_COLOR = "#4B5563";
 const TIMELINE_SOURCE_ID = "timeline-news";
+const TIMELINE_PULSE_LAYER_ID = "timeline-news-embedding-pulses";
 const TIMELINE_LAYER_ID = "timeline-news-dots";
+const TIMELINE_READY_DOT_LAYER_ID = "timeline-news-ai-ready-dots";
 const INITIAL_TIMELINE_DATE = "2026-06-20";
 const INITIAL_TIMELINE_HOUR = 2;
 const INITIAL_TIMELINE_MINUTE = 15;
@@ -84,6 +86,12 @@ type TimelineNewsItem = {
   color: "red" | "yellow" | "green" | string;
   url: string;
   source: string;
+  has_embedding?: boolean | string | number;
+  hasEmbedding?: boolean | string | number;
+  ai_ready?: boolean | string | number;
+  aiReady?: boolean | string | number;
+  pulse_strength?: number | string;
+  pulseStrength?: number | string;
 };
 
 type TimelineNewsFeatureProperties = {
@@ -94,6 +102,10 @@ type TimelineNewsFeatureProperties = {
   color: string;
   url: string;
   source: string;
+  hasEmbedding: boolean;
+  aiReady: boolean;
+  pulseReady: number;
+  pulseStrength: number;
 };
 
 type TimelineNewsFeatureCollection = GeoJSON.FeatureCollection<
@@ -169,28 +181,46 @@ function isValidCoordinate(lat: number, lon: number) {
   return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
+function readApiBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function readPulseStrength(item: TimelineNewsItem) {
+  const strength = Number(item.pulse_strength ?? item.pulseStrength ?? 1);
+  return Number.isFinite(strength) ? Math.max(0.2, strength) : 1;
+}
+
 function toTimelineGeoJson(items: TimelineNewsItem[]): TimelineNewsFeatureCollection {
   return {
     type: "FeatureCollection",
     features: items
       .filter((item) => isValidCoordinate(item.lat, item.lon))
       .slice(0, TIMELINE_LIMIT)
-      .map((item) => ({
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [item.lon, item.lat],
-        },
-        properties: {
-          id: item.id,
-          place: item.place,
-          country: item.country,
-          tone: item.tone,
-          color: item.color,
-          url: item.url,
-          source: item.source,
-        },
-      })),
+      .map((item) => {
+        const hasEmbedding = readApiBoolean(item.has_embedding ?? item.hasEmbedding);
+        const aiReady = readApiBoolean(item.ai_ready ?? item.aiReady);
+
+        return {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [item.lon, item.lat],
+          },
+          properties: {
+            id: item.id,
+            place: item.place,
+            country: item.country,
+            tone: item.tone,
+            color: item.color,
+            url: item.url,
+            source: item.source,
+            hasEmbedding,
+            aiReady,
+            pulseReady: hasEmbedding && aiReady ? 1 : 0,
+            pulseStrength: readPulseStrength(item),
+          },
+        };
+      }),
   };
 }
 
@@ -260,6 +290,61 @@ function upsertTimelineLayer(map: Map, data: TimelineNewsFeatureCollection) {
     });
   }
 
+  if (!map.getLayer(TIMELINE_PULSE_LAYER_ID)) {
+    map.addLayer({
+      id: TIMELINE_PULSE_LAYER_ID,
+      type: "circle",
+      source: TIMELINE_SOURCE_ID,
+      paint: {
+        "circle-color": [
+          "match",
+          ["get", "color"],
+          "red",
+          "#ff4d5e",
+          "green",
+          "#00e88a",
+          "yellow",
+          "#f6d44a",
+          "#67a8ff",
+        ],
+        "circle-opacity": 0,
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          1,
+          ["case", ["==", ["get", "pulseReady"], 1], ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 12], 0],
+          4,
+          ["case", ["==", ["get", "pulseReady"], 1], ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 24], 0],
+          8,
+          ["case", ["==", ["get", "pulseReady"], 1], ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 44], 0],
+        ],
+        "circle-blur": 0,
+        "circle-stroke-color": [
+          "match",
+          ["get", "color"],
+          "red",
+          "#ff8b95",
+          "green",
+          "#6fffc3",
+          "yellow",
+          "#ffe986",
+          "#a9ccff",
+        ],
+        "circle-stroke-opacity": ["case", ["==", ["get", "pulseReady"], 1], 0.78, 0],
+        "circle-stroke-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          1,
+          ["case", ["==", ["get", "pulseReady"], 1], 1.25, 0],
+          5,
+          ["case", ["==", ["get", "pulseReady"], 1], 2.4, 0],
+        ],
+      },
+    });
+  }
+
   if (!map.getLayer(TIMELINE_LAYER_ID)) {
     map.addLayer({
       id: TIMELINE_LAYER_ID,
@@ -285,6 +370,126 @@ function upsertTimelineLayer(map: Map, data: TimelineNewsFeatureCollection) {
       },
     });
   }
+
+  if (!map.getLayer(TIMELINE_READY_DOT_LAYER_ID)) {
+    map.addLayer({
+      id: TIMELINE_READY_DOT_LAYER_ID,
+      type: "circle",
+      source: TIMELINE_SOURCE_ID,
+      paint: {
+        "circle-color": [
+          "match",
+          ["get", "color"],
+          "red",
+          "#ff4d5e",
+          "green",
+          "#00e88a",
+          "yellow",
+          "#f6d44a",
+          "#67a8ff",
+        ],
+        "circle-opacity": ["case", ["==", ["get", "pulseReady"], 1], 0.88, 0],
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          1,
+          ["case", ["==", ["get", "pulseReady"], 1], 5.5, 0],
+          4,
+          ["case", ["==", ["get", "pulseReady"], 1], 9, 0],
+          8,
+          ["case", ["==", ["get", "pulseReady"], 1], 16, 0],
+        ],
+        "circle-stroke-color": [
+          "match",
+          ["get", "color"],
+          "red",
+          "#ffd2d7",
+          "green",
+          "#ccffe8",
+          "yellow",
+          "#fff3b8",
+          "#d9e8ff",
+        ],
+        "circle-stroke-opacity": ["case", ["==", ["get", "pulseReady"], 1], 0.92, 0],
+        "circle-stroke-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          1,
+          ["case", ["==", ["get", "pulseReady"], 1], 1.5, 0],
+          5,
+          ["case", ["==", ["get", "pulseReady"], 1], 2.5, 0],
+        ],
+      },
+    });
+  }
+}
+
+function animateTimelinePulse(map: Map) {
+  if (!map.getLayer(TIMELINE_PULSE_LAYER_ID)) {
+    return;
+  }
+
+  const phase = (Date.now() % 1600) / 1600;
+  const ringStrokeOpacity = Math.max(0, (1 - phase) * 0.78);
+  const coreBlink = 0.5 + Math.sin(Date.now() / 135) * 0.5;
+
+  map.setPaintProperty(TIMELINE_PULSE_LAYER_ID, "circle-opacity", 0);
+  map.setPaintProperty(TIMELINE_PULSE_LAYER_ID, "circle-stroke-opacity", [
+    "case",
+    ["==", ["get", "pulseReady"], 1],
+    ringStrokeOpacity,
+    0,
+  ]);
+  map.setPaintProperty(TIMELINE_PULSE_LAYER_ID, "circle-radius", [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    1,
+    [
+      "case",
+      ["==", ["get", "pulseReady"], 1],
+      ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 10 + phase * 24],
+      0,
+    ],
+    4,
+    [
+      "case",
+      ["==", ["get", "pulseReady"], 1],
+      ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 18 + phase * 38],
+      0,
+    ],
+    8,
+    [
+      "case",
+      ["==", ["get", "pulseReady"], 1],
+      ["*", ["coalesce", ["to-number", ["get", "pulseStrength"]], 1], 34 + phase * 60],
+      0,
+    ],
+  ]);
+
+  if (!map.getLayer(TIMELINE_READY_DOT_LAYER_ID)) {
+    return;
+  }
+
+  map.setPaintProperty(TIMELINE_READY_DOT_LAYER_ID, "circle-opacity", [
+    "case",
+    ["==", ["get", "pulseReady"], 1],
+    0.72 + coreBlink * 0.28,
+    0,
+  ]);
+  map.setPaintProperty(TIMELINE_READY_DOT_LAYER_ID, "circle-radius", [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    1,
+    ["case", ["==", ["get", "pulseReady"], 1], 5.5 + coreBlink * 1.8, 0],
+    4,
+    ["case", ["==", ["get", "pulseReady"], 1], 9 + coreBlink * 2.4, 0],
+    8,
+    ["case", ["==", ["get", "pulseReady"], 1], 16 + coreBlink * 3.2, 0],
+  ]);
 }
 
 export default function MapView() {
@@ -552,10 +757,14 @@ export default function MapView() {
     const revolveGlobe = () => {
       const activeMap = mapRef.current;
 
-      if (activeMap && !isUserInteractingRef.current && activeMap.getZoom() < 4) {
-        const center = activeMap.getCenter();
-        center.lng -= GLOBE_ROTATION_SPEED;
-        activeMap.setCenter(center);
+      if (activeMap) {
+        animateTimelinePulse(activeMap);
+
+        if (!isUserInteractingRef.current && activeMap.getZoom() < 4) {
+          const center = activeMap.getCenter();
+          center.lng -= GLOBE_ROTATION_SPEED;
+          activeMap.setCenter(center);
+        }
       }
 
       animationFrameRef.current = window.requestAnimationFrame(revolveGlobe);
@@ -605,10 +814,11 @@ export default function MapView() {
 
         timelineDataRef.current = timelineData;
         setTimelineNewsCount(timelineData.features.length);
+        const pulseReadyCount = timelineData.features.filter((feature) => feature.properties.pulseReady === 1).length;
         setTimelineStatus(
           timelineData.features.length === 0 && payload.message
             ? payload.message
-            : `${timelineData.features.length} timeline points loaded`,
+            : `${timelineData.features.length} timeline points loaded / ${pulseReadyCount} AI-ready pulses`,
         );
 
         if (mapRef.current) {
