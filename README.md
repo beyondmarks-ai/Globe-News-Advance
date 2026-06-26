@@ -4,6 +4,44 @@ Globe News Advance is a real-time and historical news intelligence application. 
 
 The app is designed around one core workflow: click a news point, understand the event quickly, then ask deeper questions using the selected article, timeline, location, embeddings, and backend memory as context.
 
+## Screenshots
+
+Captured UI states are included below for quick reference.
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="public/readme/prototype-notice.jpg" alt="Ask AI prototype notice" width="100%" />
+      <br />
+      <sub>Startup prototype notice</sub>
+    </td>
+    <td align="center">
+      <img src="public/readme/globe-overview.jpg" alt="Globe overview" width="100%" />
+      <br />
+      <sub>Live globe overview</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="public/readme/historical-machine.jpg" alt="Historical machine" width="100%" />
+      <br />
+      <sub>Historical timeline controls</sub>
+    </td>
+    <td align="center">
+      <img src="public/readme/article-card.jpg" alt="Article card" width="100%" />
+      <br />
+      <sub>News detail card with Ask AI entry</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="public/readme/ask-ai-modal.jpg" alt="Ask AI modal" width="100%" />
+      <br />
+      <sub>Ask AI modal background and layout</sub>
+    </td>
+  </tr>
+</table>
+
 ## Core Features
 
 - Interactive 3D globe powered by MapLibre GL.
