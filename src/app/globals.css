@@ -835,7 +835,6 @@ button {
   flex: 0 0 auto;
 }
 
-.location-voice-button,
 .location-language-select,
 .location-card-close {
   width: 30px;
@@ -847,37 +846,9 @@ button {
   color: #aeb7c2;
 }
 
-.location-voice-button {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(0, 255, 138, 0.24);
-  border-radius: 10px;
-  background: rgba(0, 255, 138, 0.07);
-  color: #00ff8a;
-  padding: 0;
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
-}
-
-.location-voice-button svg {
-  display: block;
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-
 .location-language-select {
   appearance: none;
-  width: 112px;
+  width: 148px;
   height: 34px;
   border-color: rgba(127, 148, 172, 0.3);
   border-radius: 12px;
@@ -948,7 +919,6 @@ button {
   transform: rotate(-45deg);
 }
 
-.location-voice-button:hover,
 .location-language-select:hover,
 .location-card-close:hover {
   border-color: rgba(0, 255, 138, 0.42);
@@ -965,13 +935,6 @@ button {
   outline-offset: 2px;
 }
 
-.location-voice-button:hover {
-  border-color: rgba(0, 255, 138, 0.56);
-  background: rgba(0, 255, 138, 0.14);
-  opacity: 1;
-  transform: translateY(-1px);
-}
-
 .location-language-select:hover {
   border-color: rgba(0, 255, 138, 0.46);
   background-color: rgba(0, 255, 138, 0.09);
@@ -980,7 +943,6 @@ button {
   transform: none;
 }
 
-.location-voice-button:focus-visible,
 .location-language-select:focus-visible {
   outline: 2px solid rgba(0, 255, 138, 0.65);
   outline-offset: 2px;
@@ -1286,7 +1248,7 @@ button {
   padding-bottom: 16px;
 }
 
-.ask-news-header div {
+.ask-news-header-title {
   display: grid;
   gap: 3px;
   max-width: min(720px, calc(100% - 56px));
@@ -1306,6 +1268,91 @@ button {
   line-height: 1.25;
   overflow-wrap: anywhere;
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.72);
+}
+
+.ask-news-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+}
+
+.ask-news-voice-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 104px;
+  height: 36px;
+  border: 1px solid rgba(0, 255, 138, 0.32);
+  border-radius: 999px;
+  background: rgba(0, 255, 138, 0.1);
+  color: #eafff5;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ask-news-voice-button:hover {
+  border-color: rgba(0, 255, 138, 0.58);
+  background: rgba(0, 255, 138, 0.16);
+}
+
+.ask-news-voice-button:disabled {
+  border-color: rgba(127, 148, 172, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: #7f8a98;
+  cursor: not-allowed;
+}
+
+.ask-news-voice-button.is-connecting {
+  border-color: rgba(246, 212, 74, 0.62);
+  background: rgba(246, 212, 74, 0.14);
+  color: #fff5bf;
+}
+
+.ask-news-voice-button.is-connected {
+  border-color: rgba(255, 77, 94, 0.58);
+  background: rgba(255, 77, 94, 0.14);
+  color: #ffd7dc;
+}
+
+.ask-news-voice-icon {
+  position: relative;
+  width: 9px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+
+.ask-news-voice-icon::after {
+  position: absolute;
+  right: -4px;
+  bottom: -6px;
+  left: -4px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-radius: 0 0 999px 999px;
+  content: "";
+}
+
+.ask-news-voice-status {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(127, 148, 172, 0.2);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.38);
+  color: #dce8f2;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.ask-news-voice-audio {
+  display: none;
 }
 
 .ask-news-panel-close {
@@ -2389,6 +2436,29 @@ button {
 
   .ask-news-header strong {
     font-size: 16px;
+  }
+
+  .ask-news-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .ask-news-header-actions {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .ask-news-voice-button {
+    min-width: 88px;
+    height: 34px;
+    padding: 0 11px;
+  }
+
+  .ask-news-panel-close {
+    width: 34px;
+    height: 34px;
   }
 
   .ask-news-form {

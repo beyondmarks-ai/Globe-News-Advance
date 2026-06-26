@@ -59,6 +59,7 @@ type Coordinates = {
 type SelectedLocation = {
   coordinates: Coordinates;
   placeName: string;
+  country?: string;
   source?: string;
   url?: string;
   tone?: number;
@@ -80,6 +81,7 @@ type ArticleDetails = {
 
 type ArticleLoadState = "idle" | "loading" | "ready" | "error";
 type AskNewsLoadState = "idle" | "loading" | "error";
+type VoiceNewsLoadState = "idle" | "connecting" | "connected" | "error";
 
 type Basemap = "dark" | "satellite";
 
@@ -121,10 +123,95 @@ type AskNewsMessage = {
   content: string;
 };
 
+type RealtimeFunctionCallItem = {
+  type?: string;
+  name?: string;
+  arguments?: string;
+  call_id?: string;
+};
+
+type RealtimeDataMessage = {
+  type?: string;
+  name?: string;
+  arguments?: string;
+  call_id?: string;
+  transcript?: string;
+  item?: RealtimeFunctionCallItem;
+  response?: {
+    output?: RealtimeFunctionCallItem[];
+  };
+};
+
 type TimelineNewsFeatureCollection = GeoJSON.FeatureCollection<
   GeoJSON.Point,
   TimelineNewsFeatureProperties
 >;
+
+const ARTICLE_LANGUAGES = [
+  ["en-US", "English"],
+  ["hi-IN", "हिन्दी"],
+  ["ur-PK", "اردو"],
+  ["ar-SA", "العربية"],
+  ["bn-IN", "বাংলা"],
+  ["ta-IN", "தமிழ்"],
+  ["te-IN", "తెలుగు"],
+  ["mr-IN", "मराठी"],
+  ["gu-IN", "ગુજરાતી"],
+  ["pa-IN", "ਪੰਜਾਬੀ"],
+  ["kn-IN", "ಕನ್ನಡ"],
+  ["ml-IN", "മലയാളം"],
+  ["or-IN", "ଓଡ଼ିଆ"],
+  ["as-IN", "অসমীয়া"],
+  ["ne-NP", "नेपाली"],
+  ["si-LK", "සිංහල"],
+  ["my-MM", "မြန်မာ"],
+  ["th-TH", "ไทย"],
+  ["vi-VN", "Tiếng Việt"],
+  ["id-ID", "Bahasa Indonesia"],
+  ["ms-MY", "Bahasa Melayu"],
+  ["fil-PH", "Filipino"],
+  ["zh-CN", "中文"],
+  ["zh-TW", "繁體中文"],
+  ["ja-JP", "日本語"],
+  ["ko-KR", "한국어"],
+  ["es-ES", "Español"],
+  ["es-MX", "Español (México)"],
+  ["fr-FR", "Français"],
+  ["de-DE", "Deutsch"],
+  ["it-IT", "Italiano"],
+  ["pt-BR", "Português"],
+  ["pt-PT", "Português (Portugal)"],
+  ["ru-RU", "Русский"],
+  ["uk-UA", "Українська"],
+  ["pl-PL", "Polski"],
+  ["nl-NL", "Nederlands"],
+  ["sv-SE", "Svenska"],
+  ["da-DK", "Dansk"],
+  ["fi-FI", "Suomi"],
+  ["no-NO", "Norsk"],
+  ["tr-TR", "Türkçe"],
+  ["fa-IR", "فارسی"],
+  ["he-IL", "עברית"],
+  ["el-GR", "Ελληνικά"],
+  ["ro-RO", "Română"],
+  ["cs-CZ", "Čeština"],
+  ["hu-HU", "Magyar"],
+  ["bg-BG", "Български"],
+  ["hr-HR", "Hrvatski"],
+  ["sr-RS", "Српски"],
+  ["sk-SK", "Slovenčina"],
+  ["sl-SI", "Slovenščina"],
+  ["lt-LT", "Lietuvių"],
+  ["lv-LV", "Latviešu"],
+  ["et-EE", "Eesti"],
+  ["sw-KE", "Kiswahili"],
+  ["am-ET", "አማርኛ"],
+  ["ha-NG", "Hausa"],
+  ["yo-NG", "Yorùbá"],
+  ["zu-ZA", "isiZulu"],
+] as const;
+
+const RIGHT_TO_LEFT_ARTICLE_LANGUAGES = new Set(["ar-SA", "fa-IR", "he-IL", "ur-PK"]);
 
 function formatCoordinate(value: number) {
   return value.toFixed(6);
@@ -258,6 +345,7 @@ function readTimelineFeature(feature: maplibregl.MapGeoJSONFeature | undefined) 
   return {
     coordinates: { lng, lat },
     placeName: properties.place,
+    country: typeof properties.country === "string" ? properties.country : undefined,
     source: properties.source,
     url: properties.url,
     tone: typeof properties.tone === "number" ? properties.tone : Number(properties.tone),
@@ -300,6 +388,29 @@ function getAskNewsUserId() {
 
 function createAskNewsSessionId(userId: string, timestamp: string, url: string) {
   return `${userId}_${timestamp}_${hashString(url)}`;
+}
+
+function createVoiceNewsSessionId(timestamp: string, url: string) {
+  return `voice_${timestamp}_${hashString(url)}`;
+}
+
+function readRealtimeClientSecret(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  if (typeof record.client_secret === "string") {
+    return record.client_secret;
+  }
+
+  if (record.client_secret && typeof record.client_secret === "object") {
+    const nested = record.client_secret as Record<string, unknown>;
+    return typeof nested.value === "string" ? nested.value : null;
+  }
+
+  return null;
 }
 
 function readAskNewsAnswer(payload: unknown) {
@@ -574,6 +685,11 @@ export default function MapView() {
   const animationFrameRef = useRef<number | null>(null);
   const articleRequestRef = useRef(0);
   const selectedLanguageRef = useRef("en-US");
+  const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const voiceDataChannelRef = useRef<RTCDataChannel | null>(null);
+  const voiceAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const voiceMicStreamRef = useRef<MediaStream | null>(null);
+  const processedRealtimeToolCallsRef = useRef<Set<string>>(new Set());
 
   const [basemap, setBasemap] = useState<Basemap>("dark");
   const [detailLocation, setDetailLocation] = useState<SelectedLocation | null>(null);
@@ -585,6 +701,8 @@ export default function MapView() {
   const [askNewsMessages, setAskNewsMessages] = useState<AskNewsMessage[]>([]);
   const [askNewsLoadState, setAskNewsLoadState] = useState<AskNewsLoadState>("idle");
   const [askNewsError, setAskNewsError] = useState("");
+  const [voiceNewsLoadState, setVoiceNewsLoadState] = useState<VoiceNewsLoadState>("idle");
+  const [voiceNewsStatus, setVoiceNewsStatus] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("en-US");
   const [timelineStatus, setTimelineStatus] = useState("Loading up to 1,000 timeline points...");
   const [timelineNewsCount, setTimelineNewsCount] = useState<number | null>(null);
@@ -603,16 +721,38 @@ export default function MapView() {
   const timelineSlots = Array.from({ length: 4 }, (_, index) =>
     formatTimelineTime(timelineHour * 60 + index * TIMELINE_STEP_MINUTES),
   );
-  const isRightToLeftArticle = speechLanguage === "ur-PK" || speechLanguage === "ar-SA";
+  const isRightToLeftArticle = RIGHT_TO_LEFT_ARTICLE_LANGUAGES.has(speechLanguage);
   const canAskNews = Boolean(detailLocation?.source && detailLocation.hasEmbedding && detailLocation.aiReady);
+  const canStartVoiceNews = canAskNews && articleLoadState === "ready" && Boolean(articleDetails);
+
+  const stopVoiceNewsChat = useCallback(() => {
+    voiceDataChannelRef.current?.close();
+    voicePeerConnectionRef.current?.close();
+    voiceMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceAudioElementRef.current?.remove();
+    voiceDataChannelRef.current = null;
+    voicePeerConnectionRef.current = null;
+    voiceMicStreamRef.current = null;
+    voiceAudioElementRef.current = null;
+    processedRealtimeToolCallsRef.current.clear();
+    setVoiceNewsLoadState("idle");
+    setVoiceNewsStatus("");
+  }, []);
 
   const resetAskNewsChat = useCallback(() => {
+    stopVoiceNewsChat();
     setIsAskNewsOpen(false);
     setAskNewsQuestion("");
     setAskNewsMessages([]);
     setAskNewsLoadState("idle");
     setAskNewsError("");
-  }, []);
+  }, [stopVoiceNewsChat]);
+
+  useEffect(() => {
+    return () => {
+      stopVoiceNewsChat();
+    };
+  }, [stopVoiceNewsChat]);
 
   useEffect(() => {
     function closeHistoricalMachine(event: PointerEvent) {
@@ -964,6 +1104,82 @@ export default function MapView() {
     void selectCoordinates(lng, lat, result.placeName, true);
   }
 
+  function getSelectedNewsContext() {
+    if (!detailLocation) {
+      return null;
+    }
+
+    return {
+      title: articleDetails?.title ?? detailLocation.placeName,
+      articleSummary: articleDetails
+        ? {
+            whatHappened: articleDetails.whatHappened,
+            when: articleDetails.when,
+            where: articleDetails.where,
+            why: articleDetails.why,
+            how: articleDetails.how,
+          }
+        : null,
+      source: detailLocation.source,
+      url: detailLocation.url,
+      date: activeTimelineDate,
+      timestamp: formatAskNewsTimestamp(activeTimelineDate, activeTimelineTime),
+      place: detailLocation.placeName,
+      country: detailLocation.country,
+      lat: detailLocation.coordinates.lat,
+      lon: detailLocation.coordinates.lng,
+    };
+  }
+
+  async function askNewsBackend(question: string, mode: "text" | "voice") {
+    if (!detailLocation) {
+      throw new Error("No selected news ripple.");
+    }
+
+    const selectedNews = getSelectedNewsContext();
+
+    if (!selectedNews) {
+      throw new Error("No selected news ripple.");
+    }
+
+    const timestamp = selectedNews.timestamp;
+    const sessionSource = detailLocation.url ?? detailLocation.newsId ?? detailLocation.placeName;
+    const sessionId =
+      mode === "voice"
+        ? createVoiceNewsSessionId(timestamp, sessionSource)
+        : createAskNewsSessionId(getAskNewsUserId(), timestamp, sessionSource);
+    const requestBody = {
+      session_id: sessionId,
+      question,
+      ...selectedNews,
+      top_k: ASK_NEWS_TOP_K,
+    };
+
+    if (mode === "voice") {
+      console.log("Selected news sent to ask_news:", selectedNews);
+      console.log("Question:", question);
+    }
+
+    const response = await fetch("/api/ask-news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Unable to ask AI about this news.");
+    }
+
+    const answer = readAskNewsAnswer(payload);
+
+    if (!answer) {
+      throw new Error("The AI response did not include an answer.");
+    }
+
+    return answer;
+  }
+
   async function submitAskNewsQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -990,34 +1206,7 @@ export default function MapView() {
     setAskNewsLoadState("loading");
 
     try {
-      const timestamp = formatAskNewsTimestamp(activeTimelineDate, activeTimelineTime);
-      const sessionId = createAskNewsSessionId(
-        getAskNewsUserId(),
-        timestamp,
-        detailLocation.url ?? detailLocation.newsId ?? detailLocation.placeName,
-      );
-      const response = await fetch("/api/ask-news", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionId,
-          question,
-          date: activeTimelineDate,
-          timestamp,
-          top_k: ASK_NEWS_TOP_K,
-        }),
-      });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Unable to ask AI about this news.");
-      }
-
-      const answer = readAskNewsAnswer(payload);
-
-      if (!answer) {
-        throw new Error("The AI response did not include an answer.");
-      }
+      const answer = await askNewsBackend(question, "text");
 
       setAskNewsMessages((messages) => [
         ...messages,
@@ -1034,25 +1223,275 @@ export default function MapView() {
     }
   }
 
-  function speakNewsSummary() {
-    if (!detailLocation || typeof window === "undefined" || !window.speechSynthesis) {
+  async function handleRealtimeAskNewsTool(callId: string | undefined, rawArguments: string | undefined) {
+    const dataChannel = voiceDataChannelRef.current;
+
+    if (!dataChannel || dataChannel.readyState !== "open" || !callId) {
+      setVoiceNewsStatus("Realtime asked for news, but the tool call was incomplete.");
       return;
     }
 
-    window.speechSynthesis.cancel();
-    const speechText = articleDetails
-      ? [
-          articleDetails.title,
-          articleDetails.whatHappened,
-          articleDetails.when,
-          articleDetails.why,
-          articleDetails.how,
-          articleDetails.where,
-        ].join(". ")
-      : detailLocation.placeName;
-    const utterance = new SpeechSynthesisUtterance(speechText);
-    utterance.lang = speechLanguage;
-    window.speechSynthesis.speak(utterance);
+    if (processedRealtimeToolCallsRef.current.has(callId)) {
+      return;
+    }
+
+    processedRealtimeToolCallsRef.current.add(callId);
+
+    let question = "Tell me about this selected news.";
+
+    try {
+      const parsedArguments = rawArguments ? (JSON.parse(rawArguments) as { question?: unknown }) : {};
+
+      if (typeof parsedArguments.question === "string" && parsedArguments.question.trim()) {
+        question = parsedArguments.question.trim();
+      }
+    } catch {
+      question = rawArguments?.trim() || question;
+    }
+
+    setAskNewsMessages((messages) => [
+      ...messages,
+      {
+        id: `voice-user-${Date.now()}`,
+        role: "user",
+        content: question,
+      },
+    ]);
+    setAskNewsError("");
+    setAskNewsLoadState("loading");
+    setVoiceNewsStatus("Calling ask_news brain...");
+
+    try {
+      const answer = await askNewsBackend(question, "voice");
+
+      setAskNewsMessages((messages) => [
+        ...messages,
+        {
+          id: `voice-assistant-${Date.now()}`,
+          role: "assistant",
+          content: answer,
+        },
+      ]);
+      setAskNewsLoadState("idle");
+      setVoiceNewsStatus("Speaking ask_news answer.");
+      dataChannel.send(
+        JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify({
+              answer,
+            }),
+          },
+        }),
+      );
+      dataChannel.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            instructions:
+              "Use the ask_news tool output as the source of truth. Answer naturally in Hinglish, around 60% English and 40% Hindi. Do not mention tool calls.",
+          },
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to answer the voice question.";
+      setAskNewsError(message);
+      setAskNewsLoadState("error");
+      setVoiceNewsStatus("ask_news failed.");
+      dataChannel.send(
+        JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify({
+              error: message,
+            }),
+          },
+        }),
+      );
+      dataChannel.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            instructions:
+              "Briefly tell the user in Hinglish that the news backend could not answer right now and they can try again.",
+          },
+        }),
+      );
+    }
+  }
+
+  async function startVoiceNewsChat() {
+    if (!detailLocation || !canAskNews || voiceNewsLoadState === "connecting") {
+      return;
+    }
+
+    if (!canStartVoiceNews) {
+      setVoiceNewsLoadState("error");
+      setVoiceNewsStatus("AI news context is still loading. Try voice again after the title and summary appear.");
+      return;
+    }
+
+    stopVoiceNewsChat();
+    setVoiceNewsLoadState("connecting");
+    setVoiceNewsStatus("Connecting voice chat...");
+
+    try {
+      const tokenResponse = await fetch("/api/realtime-token", { cache: "no-store" });
+      const tokenPayload = await tokenResponse.json();
+
+      if (!tokenResponse.ok) {
+        throw new Error(tokenPayload.error ?? "Realtime token failed.");
+      }
+
+      const ephemeralKey = readRealtimeClientSecret(tokenPayload);
+      const webrtcUrl = typeof tokenPayload.webrtc_url === "string" ? tokenPayload.webrtc_url : null;
+
+      if (!ephemeralKey || !webrtcUrl) {
+        throw new Error("Realtime token response is missing connection details.");
+      }
+
+      const peerConnection = new RTCPeerConnection();
+      const audioElement = document.createElement("audio");
+      audioElement.autoplay = true;
+      audioElement.className = "ask-news-voice-audio";
+      document.body.appendChild(audioElement);
+
+      peerConnection.ontrack = (event) => {
+        audioElement.srcObject = event.streams[0];
+      };
+
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const micTrack = micStream.getAudioTracks()[0];
+
+      if (!micTrack) {
+        throw new Error("No microphone track was found.");
+      }
+
+      peerConnection.addTrack(micTrack, micStream);
+
+      const dataChannel = peerConnection.createDataChannel("realtime-channel");
+      dataChannel.onopen = () => {
+        const selectedNews = getSelectedNewsContext();
+        const selectedNewsContextText = JSON.stringify(selectedNews);
+        setVoiceNewsLoadState("connected");
+        setVoiceNewsStatus(`Ask about this news: ${selectedNews?.title ?? "selected news"}`);
+        console.log("Realtime selected news context:", selectedNews);
+        dataChannel.send(
+          JSON.stringify({
+            type: "session.update",
+            session: {
+              instructions:
+                `You are a live news voice assistant. Speak naturally in Hinglish, around 60% English and 40% Hindi. The user has already clicked one blinking globe ripple, and that clicked ripple is the ONLY active news. Active clicked news context: ${selectedNewsContextText}. Never ask "which news", "what news", or "what article" because the active news is already selected. If the user says "this news", "that", "this", "after that", "why", "how", "what happened", or asks any news question without naming an article, assume they mean the active clicked news. Do not answer news facts from your own knowledge. For every news question or follow-up about the active clicked news, call the ask_news tool before answering. After the tool returns, speak the answer naturally in Hinglish. For a brief greeting or voice-control clarification only, you may respond normally.`,
+              tools: [
+                {
+                  type: "function",
+                  name: "ask_news",
+                  description:
+                    `Ask the Globe News backend about the active clicked ripple. The active clicked news is already selected, so do not ask the user which news they mean. Use this for every news question and follow-up. Active clicked news context: ${selectedNewsContextText}`,
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      question: {
+                        type: "string",
+                        description:
+                          "The user's spoken question about the selected news ripple or a follow-up question.",
+                      },
+                    },
+                    required: ["question"],
+                  },
+                },
+              ],
+              tool_choice: "auto",
+              turn_detection: {
+                type: "server_vad",
+                create_response: true,
+              },
+            },
+          }),
+        );
+        dataChannel.send(
+          JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: `ACTIVE_CLICKED_NEWS_CONTEXT. Do not respond to this message. The user already clicked this blinking ripple and all future news questions refer to it. Never ask which news. Context: ${selectedNewsContextText}`,
+                },
+              ],
+            },
+          }),
+        );
+      };
+      dataChannel.onclose = () => {
+        setVoiceNewsLoadState("idle");
+        setVoiceNewsStatus("");
+      };
+      dataChannel.onmessage = (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as RealtimeDataMessage;
+          console.log("Realtime event:", message.type);
+
+          if (message.type === "response.done") {
+            message.response?.output?.forEach((outputItem) => {
+              if (outputItem.type === "function_call") {
+                void handleRealtimeAskNewsTool(outputItem.call_id, outputItem.arguments);
+              }
+            });
+            setVoiceNewsStatus("Listening. Ask your news question.");
+          }
+
+          if (
+            message.type === "response.function_call_arguments.done" &&
+            (message.name === "ask_news" || !message.name)
+          ) {
+            void handleRealtimeAskNewsTool(message.call_id, message.arguments);
+          }
+
+          if (message.type === "response.output_item.done" && message.item?.type === "function_call") {
+            void handleRealtimeAskNewsTool(message.item.call_id, message.item.arguments);
+          }
+        } catch {
+          setVoiceNewsStatus("Received an unreadable realtime event.");
+        }
+      };
+
+      voicePeerConnectionRef.current = peerConnection;
+      voiceDataChannelRef.current = dataChannel;
+      voiceAudioElementRef.current = audioElement;
+      voiceMicStreamRef.current = micStream;
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      const sdpResponse = await fetch(webrtcUrl, {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          Authorization: `Bearer ${ephemeralKey}`,
+          "Content-Type": "application/sdp",
+        },
+      });
+
+      if (!sdpResponse.ok) {
+        throw new Error(await sdpResponse.text());
+      }
+
+      await peerConnection.setRemoteDescription({
+        type: "answer",
+        sdp: await sdpResponse.text(),
+      });
+    } catch (error) {
+      stopVoiceNewsChat();
+      setVoiceNewsLoadState("error");
+      setVoiceNewsStatus(error instanceof Error ? error.message : "Realtime connection failed.");
+    }
   }
 
   return (
@@ -1236,17 +1675,6 @@ export default function MapView() {
               {articleDetails ? <span className="location-card-emoji">{articleDetails.emoji}</span> : null}
             </h1>
             <div className="location-card-tools">
-              <button
-                className="location-voice-button"
-                type="button"
-                aria-label="Read news summary aloud"
-                onClick={speakNewsSummary}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V6a3.75 3.75 0 0 0-7.5 0v5.5A3.75 3.75 0 0 0 12 15.25Z" />
-                  <path d="M5.75 10.75v.75a6.25 6.25 0 0 0 12.5 0v-.75M12 17.75V21M9.25 21h5.5" />
-                </svg>
-              </button>
               <select
                 className="location-language-select"
                 aria-label="News language"
@@ -1261,23 +1689,11 @@ export default function MapView() {
                   }
                 }}
               >
-                <option value="en-US">English</option>
-                <option value="hi-IN">हिन्दी</option>
-                <option value="ur-PK">اردو</option>
-                <option value="ar-SA">العربية</option>
-                <option value="bn-IN">বাংলা</option>
-                <option value="ta-IN">தமிழ்</option>
-                <option value="te-IN">తెలుగు</option>
-                <option value="mr-IN">मराठी</option>
-                <option value="gu-IN">ગુજરાતી</option>
-                <option value="pa-IN">ਪੰਜਾਬੀ</option>
-                <option value="es-ES">Español</option>
-                <option value="fr-FR">Français</option>
-                <option value="de-DE">Deutsch</option>
-                <option value="pt-BR">Português</option>
-                <option value="zh-CN">中文</option>
-                <option value="ja-JP">日本語</option>
-                <option value="ko-KR">한국어</option>
+                {ARTICLE_LANGUAGES.map(([value, label]) => (
+                  <option value={value} key={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
               <button
                 className="location-card-close"
@@ -1380,19 +1796,49 @@ export default function MapView() {
         <div className="ask-news-modal-backdrop" role="presentation">
           <section className="ask-news-panel" role="dialog" aria-modal="true" aria-label="Ask AI about this news">
             <div className="ask-news-header">
-              <div>
+              <div className="ask-news-header-title">
                 <span>News assistant</span>
                 <strong>{articleDetails?.title ?? detailLocation.placeName}</strong>
               </div>
-              <button
-                className="ask-news-panel-close"
-                type="button"
-                aria-label="Close news assistant"
-                onClick={() => setIsAskNewsOpen(false)}
-              >
-                <span className="location-card-close-icon" aria-hidden="true" />
-              </button>
+              <div className="ask-news-header-actions">
+                <button
+                  className={`ask-news-voice-button is-${voiceNewsLoadState}`}
+                  type="button"
+                  disabled={!canStartVoiceNews && voiceNewsLoadState !== "connected"}
+                  aria-label={voiceNewsLoadState === "connected" ? "Stop voice news chat" : "Start voice news chat"}
+                  onClick={() => {
+                    if (voiceNewsLoadState === "connected" || voiceNewsLoadState === "connecting") {
+                      stopVoiceNewsChat();
+                      return;
+                    }
+
+                    void startVoiceNewsChat();
+                  }}
+                >
+                  <span className="ask-news-voice-icon" aria-hidden="true" />
+                  <span>
+                    {voiceNewsLoadState === "connected"
+                      ? "Stop voice"
+                      : canStartVoiceNews
+                        ? "Voice"
+                        : "Loading"}
+                  </span>
+                </button>
+                <button
+                  className="ask-news-panel-close"
+                  type="button"
+                  aria-label="Close news assistant"
+                  onClick={() => {
+                    stopVoiceNewsChat();
+                    setIsAskNewsOpen(false);
+                  }}
+                >
+                  <span className="location-card-close-icon" aria-hidden="true" />
+                </button>
+              </div>
             </div>
+
+            {voiceNewsStatus ? <div className="ask-news-voice-status">{voiceNewsStatus}</div> : null}
 
             <div className="ask-news-messages" aria-live="polite">
               {askNewsMessages.length === 0 ? (

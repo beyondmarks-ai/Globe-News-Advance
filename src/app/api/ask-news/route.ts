@@ -10,6 +10,11 @@ function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function readFiniteNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
@@ -18,12 +23,29 @@ export async function POST(request: NextRequest) {
       date?: unknown;
       timestamp?: unknown;
       top_k?: unknown;
+      title?: unknown;
+      source?: unknown;
+      url?: unknown;
+      place?: unknown;
+      country?: unknown;
+      lat?: unknown;
+      lon?: unknown;
+      articleSummary?: unknown;
     };
     const sessionId = readString(body.session_id);
     const question = readString(body.question);
     const date = readString(body.date);
     const timestamp = readString(body.timestamp);
     const topK = Number(body.top_k ?? 8);
+    const title = readString(body.title);
+    const source = readString(body.source);
+    const articleUrl = readString(body.url);
+    const place = readString(body.place);
+    const country = readString(body.country);
+    const lat = readFiniteNumber(body.lat);
+    const lon = readFiniteNumber(body.lon);
+    const articleSummary =
+      body.articleSummary && typeof body.articleSummary === "object" ? body.articleSummary : null;
 
     if (!question) {
       return NextResponse.json({ error: "Question is required." }, { status: 400 });
@@ -62,6 +84,14 @@ export async function POST(request: NextRequest) {
         date,
         timestamp,
         top_k: topK,
+        ...(title ? { title } : {}),
+        ...(source ? { source } : {}),
+        ...(articleUrl ? { url: articleUrl } : {}),
+        ...(place ? { place } : {}),
+        ...(country ? { country } : {}),
+        ...(lat !== null ? { lat } : {}),
+        ...(lon !== null ? { lon } : {}),
+        ...(articleSummary ? { articleSummary } : {}),
       }),
     });
     const contentType = response.headers.get("content-type") ?? "";
