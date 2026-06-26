@@ -1,170 +1,148 @@
-# Globe News
+# Globe News Advance
 
-Globe News is a real-time and historical news intelligence app. It shows world news on an interactive 3D globe, lets users move through past news windows, and uses AI to turn selected articles into simple, structured summaries.
+Globe News Advance is a real-time and historical news intelligence application. It places geolocated news stories on an interactive 3D globe, highlights AI-ready stories with animated ripple markers, generates structured article summaries, and lets users ask follow-up questions about a selected news ripple through text or live voice.
 
-The goal of the project is to help a user understand **what happened, where it happened, when it happened, and why it matters**. Instead of reading many raw links one by one, the user can explore news by location, time, tone, and source.
+The app is designed around one core workflow: click a news point, understand the event quickly, then ask deeper questions using the selected article, timeline, location, embeddings, and backend memory as context.
 
-## Simple Project Description
+## Core Features
 
-This project is like a **news map plus historical AI assistant**.
+- Interactive 3D globe powered by MapLibre GL.
+- Dark map and Esri satellite basemap modes.
+- Live timeline loading from the latest completed 15-minute IST news slot.
+- Historical news controls for date, hour, and 15-minute window selection.
+- Up to 1,000 timeline stories per request.
+- Tone-colored news dots:
+  - Red: negative tone
+  - Yellow: neutral tone
+  - Green: positive tone
+- AI-ready ripple animation for stories where `has_embedding` and `ai_ready` are true.
+- Clickable news detail card with AI-generated article summary.
+- Multilingual article summaries in 60+ languages.
+- Ask AI modal for selected AI-ready ripple stories.
+- Text chat connected to the backend `ask_news` intelligence API.
+- Realtime voice assistant connected through WebRTC and an `ask_news` tool call.
+- Grid News page for card-based browsing and filtering.
+- Location search, geocoding, and reverse geocoding through Mapbox.
+- Server-side API routes to keep private keys and Azure Function codes out of browser code.
 
-News stories are collected from a GDELT-based Azure timeline service. Each story has a location, source, URL, and tone score. The app places those stories on a globe as colored points. A user can click a point to read AI-generated details about that article.
+## How The App Works
 
-The app also has a historical machine. A user can choose a date, hour, and 15-minute time slot to see what news was happening around the world at that time. This makes it useful for exploring how events appeared across time.
+1. The frontend requests timeline news from `GET /api/timeline-news`.
+2. The server-side route calls the Azure GDELT timeline function and returns geolocated stories.
+3. The globe renders each story as a colored point.
+4. If a story has both embeddings and AI readiness, it receives a ripple animation.
+5. The user clicks a news point.
+6. The app opens the news detail card and calls `POST /api/article-details`.
+7. Article content is extracted through Firecrawl and summarized by Azure OpenAI.
+8. If the selected story is AI-ready, the user can open Ask AI.
+9. Text questions go to `POST /api/ask-news`.
+10. Voice questions go through Azure Realtime WebRTC, which calls the frontend `ask_news` tool.
+11. The frontend tool handler calls `POST /api/ask-news` with the selected news context.
+12. Realtime speaks the backend answer naturally.
 
-## What Is Already Built
+## AI-Ready Ripple Logic
 
-- Interactive 3D globe using MapLibre GL
-- Dark map and satellite map modes
-- Live timeline updates based on the latest completed 15-minute IST slot
-- Historical date and time selection
-- Up to 1,000 geolocated news stories per timeline request
-- Colored news dots by GDELT tone:
-  - Red for negative tone
-  - Yellow for neutral tone
-  - Green for positive tone
-- Clickable news points on the globe
-- Article detail panel with AI-generated explanation
-- Grid News page for browsing the same timeline in card format
-- Search and filter news by country or place in Grid News
-- Location search and reverse geocoding through Mapbox
-- Article crawling through Firecrawl
-- Azure OpenAI article summarization
-- Multilingual article summaries
-- Text-to-speech playback for article summaries
-- Server-side API routes so private keys are not exposed to the browser
+Timeline items may include these fields:
 
-## AI Features
-
-The current AI feature is article enrichment.
-
-When a user selects a news story, the app sends the article URL to the server. The server uses Firecrawl to extract readable article content. Then Azure OpenAI converts that article into a small structured news card.
-
-The generated card includes:
-
-- Title
-- Emoji
-- What happened
-- When it happened
-- Why it happened
-- How it happened
-- Where it happened
-- Main article image when available
-
-The AI response is designed to be short and easy to understand. It avoids ads, navigation text, and unrelated page content.
-
-## Historical AI Vision
-
-The project is designed to become a historical news intelligence system.
-
-The next major AI layer can use **Azure AI Search, embeddings, and Azure OpenAI** to connect related stories together. This would allow the app to explain how one article is linked to other news, similar to a network of connected events.
-
-Example:
-
-A user clicks a news article about an election protest. The system can search older and newer stories with similar embeddings, then show related articles from the same category, location, people, organization, or event chain.
-
-This future network can help answer questions like:
-
-- Which older news stories led to this event?
-- Which later stories are connected to it?
-- Are there similar stories in other countries?
-- Which stories belong to the same category?
-- Which sources are reporting the same event?
-- How did the story change over time?
-
-## Upcoming Features
-
-1. **Embedding system and connected news network**
-
-   The app will use embeddings to understand the meaning of every news article. Similar or related articles can then be linked together as a news network. This will help users see how one story connects to older stories, later updates, same-category news, same-location news, and similar events around the world.
-
-2. **Voice assistant for direct questions and interaction**
-
-   Users will be able to ask questions by voice and get direct answers from the news system. The assistant can help users search news, explain an article, compare related stories, and interact in different languages.
-
-3. **Worldwide multilingual news experience**
-
-   The app will support news understanding in different languages across the world. Users will be able to read, listen to, and ask questions about global news in their preferred language.
-
-## Planned Azure AI Search And Embedding Flow
-
-This repository already uses Azure OpenAI for article summarization. Azure AI Search and embedding-based relationship search are not implemented in the current source code yet, but the recommended design is:
-
-1. Collect timeline news from the Azure GDELT updater.
-2. Crawl selected or scheduled article URLs.
-3. Generate embeddings for title, summary, location, category, source, and article text.
-4. Store articles and vectors in Azure AI Search.
-5. When a user opens a story, run vector search to find related stories.
-6. Use Azure OpenAI to explain the relationship in simple language.
-7. Display the result as a connected news network.
-
-Possible relationship types:
-
-- Same topic
-- Same location
-- Same category
-- Same source
-- Same people or organization
-- Cause and effect
-- Earlier background story
-- Later follow-up story
-- Similar event in another region
-
-## Main User Flow
-
-1. Open the app.
-2. The globe loads the latest completed timeline slot.
-3. News appears as colored dots around the world.
-4. The user can search for a city, country, or region.
-5. The user can switch between dark and satellite maps.
-6. The user can click a news dot.
-7. The app opens an AI-generated news explanation.
-8. The user can change the article language.
-9. The user can listen to the summary using text-to-speech.
-10. The user can open Grid News to browse the timeline as cards.
-11. The user can use the historical machine to load older news windows.
-
-## Data Source
-
-Timeline news is pulled from this Azure-hosted GDELT updater endpoint:
-
-```text
-https://gdelt-live-updater-bqgza4a6b2gqakdc.southeastasia-01.azurewebsites.net/api/timeline_news
+```ts
+has_embedding | hasEmbedding
+ai_ready | aiReady
 ```
 
-The app does not call this endpoint directly from the browser. The browser calls the local Next.js route:
+When both values are true, the point becomes AI-ready:
 
-```text
-GET /api/timeline-news?date=YYYY-MM-DD&time=HH:mm
+- it receives a pulsing/rippling visual effect on the globe;
+- the selected story can open the Ask AI chat;
+- the voice assistant receives selected-ripple context;
+- user questions are routed through the backend `ask_news` API.
+
+## Ask AI Text Flow
+
+When a user asks a typed question in the Ask AI modal, the frontend sends:
+
+```json
+{
+  "session_id": "user_hash_20260624094500_urlhash",
+  "question": "What happened after that?",
+  "title": "AI generated title",
+  "articleSummary": {
+    "whatHappened": "...",
+    "when": "...",
+    "where": "...",
+    "why": "...",
+    "how": "..."
+  },
+  "source": "source name",
+  "url": "article url",
+  "date": "2026-06-24",
+  "timestamp": "20260624094500",
+  "place": "news place",
+  "country": "news country",
+  "lat": 0,
+  "lon": 0,
+  "top_k": 8
+}
 ```
 
-The server route validates the date and time, attaches the private Azure Function code, requests up to 1,000 stories, and returns the result to the frontend.
+`session_id` is deterministic for the selected ripple so follow-up questions can use backend memory.
+
+## Realtime Voice Flow
+
+The voice assistant uses Azure/OpenAI Realtime WebRTC for live audio. Realtime remains the conversational voice layer, but the news intelligence comes from the backend `ask_news` API.
+
+Professional flow:
+
+```text
+User voice
+  -> Azure Realtime WebRTC
+  -> Realtime tool call: ask_news
+  -> Frontend receives tool call event
+  -> Frontend calls /api/ask-news with selected ripple context
+  -> Frontend sends function_call_output back to Realtime
+  -> Realtime speaks final answer
+```
+
+Realtime is configured with an `ask_news` function tool. The tool receives the user's spoken question, and the frontend attaches the selected news context before calling the backend.
+
+## Multilingual Article Summaries
+
+The news detail card supports summaries in 60+ languages, including:
+
+- English, Hindi, Urdu, Arabic, Bengali, Tamil, Telugu, Marathi, Gujarati, Punjabi
+- Kannada, Malayalam, Odia, Assamese, Nepali, Sinhala, Burmese, Thai, Vietnamese
+- Chinese, Japanese, Korean, Indonesian, Malay, Filipino
+- Spanish, French, German, Italian, Portuguese, Russian, Ukrainian, Polish, Dutch
+- Turkish, Persian, Hebrew, Greek, Romanian, Czech, Hungarian, Bulgarian, Croatian
+- Swahili, Amharic, Hausa, Yoruba, Zulu
+
+Changing the language reloads the selected article summary through `POST /api/article-details`.
 
 ## API Routes
 
-| Route | Purpose |
-| --- | --- |
-| `GET /api/timeline-news?date=YYYY-MM-DD&time=HH:mm` | Loads timeline news from the Azure GDELT updater |
-| `POST /api/article-details` | Crawls an article and generates AI article details |
-| `GET /api/geocode?query=<place>` | Searches for a location through Mapbox |
-| `GET /api/reverse-geocode?lng=<lng>&lat=<lat>` | Converts coordinates into a place name through Mapbox |
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/api/timeline-news?date=YYYY-MM-DD&time=HH:mm` | GET | Loads timeline news from the Azure GDELT timeline function. |
+| `/api/article-details` | POST | Extracts article content with Firecrawl and generates a structured AI summary with Azure OpenAI. |
+| `/api/ask-news` | POST | Proxies selected-ripple questions to the backend news intelligence API. |
+| `/api/realtime-token` | GET | Requests an ephemeral Realtime token and WebRTC URL from the backend token function. |
+| `/api/geocode?query=<place>` | GET | Searches locations through Mapbox forward geocoding. |
+| `/api/reverse-geocode?lng=<lng>&lat=<lat>` | GET | Converts coordinates into a place name through Mapbox reverse geocoding. |
 
-## Technology Stack
-
-- Next.js 16
-- React 19
-- TypeScript
-- MapLibre GL JS
-- CARTO Dark Matter basemap
-- Esri World Imagery satellite basemap
-- Mapbox Geocoding API
-- Azure-hosted GDELT timeline service
-- Firecrawl article extraction
-- Azure OpenAI chat completions
-
-## Required Environment Variables
+## Environment Variables
 
 Create `.env.local` from `.env.example`:
+
+```bash
+cp .env.example .env.local
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Required variables:
 
 ```env
 MAPBOX_ACCESS_TOKEN=your_mapbox_token_here
@@ -172,11 +150,29 @@ TIMELINE_NEWS_CODE=your_timeline_news_code_here
 FIRECRAWL_API_KEY=your_firecrawl_api_key_here
 AZURE_OPENAI_CHAT_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment/chat/completions?api-version=2025-01-01-preview
 AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
+ASK_NEWS_URL=https://your-function.azurewebsites.net/api/ask_news
+ASK_NEWS_CODE=your_ask_news_code_here
+REALTIME_TOKEN_URL=https://your-function.azurewebsites.net/api/realtime_token
+REALTIME_TOKEN_CODE=your_realtime_token_code_here
 ```
 
-Do not commit real secrets. `.env.local` is ignored by Git.
+### Variable Details
 
-## Local Setup
+| Variable | Required | Used By | Description |
+| --- | --- | --- | --- |
+| `MAPBOX_ACCESS_TOKEN` | Yes | `/api/geocode`, `/api/reverse-geocode` | Mapbox token for place search and reverse geocoding. |
+| `TIMELINE_NEWS_CODE` | Yes | `/api/timeline-news` | Azure Function code for the timeline news endpoint. |
+| `FIRECRAWL_API_KEY` | Yes | `/api/article-details` | Firecrawl API key for article extraction. |
+| `AZURE_OPENAI_CHAT_URL` | Yes | `/api/article-details` | Azure OpenAI chat completions endpoint for article summaries. |
+| `AZURE_OPENAI_API_KEY` | Yes | `/api/article-details` | Azure OpenAI API key. |
+| `ASK_NEWS_URL` | Recommended | `/api/ask-news` | Backend ask-news endpoint. Defaults to the project Azure endpoint if omitted. |
+| `ASK_NEWS_CODE` | Yes for secured Azure Function | `/api/ask-news` | Azure Function code for ask-news. Added server-side only. |
+| `REALTIME_TOKEN_URL` | Recommended | `/api/realtime-token` | Backend endpoint that returns Realtime `client_secret` and `webrtc_url`. |
+| `REALTIME_TOKEN_CODE` | Optional if URL already includes code | `/api/realtime-token` | Azure Function code for realtime token endpoint. |
+
+Never commit `.env.local` or real secret values. The repository `.gitignore` excludes local env files.
+
+## Local Development
 
 Install dependencies:
 
@@ -190,21 +186,27 @@ Start the development server:
 npm run dev
 ```
 
-Open the app:
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-## Available Commands
+Run validation:
 
 ```bash
-npm run dev      # Start the development server
-npm run build    # Create a production build
-npm run start    # Run the production build
-npm run lint     # Run ESLint
-npx tsc --noEmit # Run TypeScript validation
+npm run lint
+npm run build
 ```
+
+## Available Scripts
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Starts the Next.js development server. |
+| `npm run build` | Builds the production app. |
+| `npm run start` | Runs the production build. |
+| `npm run lint` | Runs ESLint. |
 
 ## Project Structure
 
@@ -212,39 +214,116 @@ npx tsc --noEmit # Run TypeScript validation
 src/
   app/
     api/
-      article-details/     Firecrawl + Azure OpenAI article enrichment
-      geocode/             Mapbox forward-geocoding proxy
-      reverse-geocode/     Mapbox reverse-geocoding proxy
-      timeline-news/       Azure timeline-news proxy
-    grid-news/             Grid-based timeline news page
-    globals.css            Application styles
-    layout.tsx             Root layout
-    page.tsx               Main globe page
+      article-details/       Firecrawl + Azure OpenAI article summary route
+      ask-news/              Backend news intelligence proxy
+      geocode/               Mapbox forward geocoding proxy
+      realtime-token/        Realtime ephemeral token proxy
+      reverse-geocode/       Mapbox reverse geocoding proxy
+      timeline-news/         Azure GDELT timeline proxy
+    grid-news/               Grid-based timeline news browser
+    globals.css              Global styles
+    layout.tsx               Root app layout
+    page.tsx                 Globe page
   components/
-    GridNewsView.tsx       Card-based news browser
-    LocationSearch.tsx     Search and basemap controls
-    MapView.tsx            Globe, timeline, map layers, and detail panel
+    GridNewsView.tsx         Grid News UI
+    LocationSearch.tsx       Location search and basemap controls
+    MapView.tsx              Globe, timeline, article card, Ask AI, voice assistant
 public/
-  mic.png                  Voice-control image asset
+  bg.png                     Ask AI modal background image
 ```
 
-## Production Notes
+## External Services
 
-The deployment environment must provide the required environment variables and must be able to reach:
+The app depends on:
 
-- Azure timeline-news endpoint
-- Azure OpenAI endpoint
-- Firecrawl API
-- Mapbox APIs
-- CARTO map tiles
-- Esri satellite tiles
+- Azure-hosted GDELT timeline function
+- Azure-hosted ask-news intelligence function
+- Azure-hosted realtime-token function
+- Azure OpenAI chat completions
+- Firecrawl article extraction
+- Mapbox Geocoding API
+- CARTO Dark Matter map tiles
+- Esri World Imagery satellite tiles
 
-Before pushing or deploying, run:
+## Deployment Checklist
+
+Before deploying:
+
+1. Add all required env variables to the hosting provider.
+2. Confirm Azure Function codes are not hardcoded in source files.
+3. Run:
 
 ```bash
 npm run lint
-npx tsc --noEmit
 npm run build
 ```
 
-Never place production access codes, API keys, or Mapbox secrets in source files, screenshots, issues, or commit messages.
+4. Verify these routes return successful responses:
+
+```text
+GET /api/timeline-news?date=YYYY-MM-DD&time=HH:mm
+POST /api/article-details
+POST /api/ask-news
+GET /api/realtime-token
+```
+
+5. Test a live AI-ready ripple:
+   - click a pulsing news point;
+   - wait for the AI-generated title and summary;
+   - open Ask AI;
+   - ask a typed question;
+   - start Voice and ask a spoken follow-up.
+
+## Troubleshooting
+
+### Timeline points do not load
+
+- Check `TIMELINE_NEWS_CODE`.
+- Confirm the selected date uses `YYYY-MM-DD`.
+- Confirm the selected time uses a 15-minute slot such as `09:45`.
+
+### Location search fails
+
+- Check `MAPBOX_ACCESS_TOKEN`.
+- Confirm the token has access to Mapbox geocoding.
+
+### Article summary fails
+
+- Check `FIRECRAWL_API_KEY`.
+- Check `AZURE_OPENAI_CHAT_URL`.
+- Check `AZURE_OPENAI_API_KEY`.
+- Some source pages may block scraping or contain no readable article text.
+
+### Ask AI does not answer
+
+- Check `ASK_NEWS_URL`.
+- Check `ASK_NEWS_CODE`.
+- In the browser Network tab, confirm `POST /api/ask-news` is called.
+- Confirm the selected story has `has_embedding` and `ai_ready`.
+
+### Voice does not connect
+
+- Check `REALTIME_TOKEN_URL`.
+- Check `REALTIME_TOKEN_CODE` if the code is not already included in `REALTIME_TOKEN_URL`.
+- Confirm `/api/realtime-token` returns `client_secret` and `webrtc_url`.
+- Allow microphone access in the browser.
+
+### Voice answers without using backend
+
+- Open the browser console.
+- Look for Realtime function-call events:
+  - `response.function_call_arguments.done`
+  - `response.output_item.done`
+- Confirm Network shows `POST /api/ask-news`.
+- If no backend request appears, inspect the Realtime session tool configuration in `MapView.tsx`.
+
+## Security Notes
+
+- Do not expose Azure Function codes in frontend code.
+- Do not commit `.env.local`.
+- Do not paste real API keys into README files, issues, screenshots, or commit messages.
+- Server-side routes should remain the only place where provider credentials are attached.
+
+## License
+
+This project is private unless a license is added.
