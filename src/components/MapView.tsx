@@ -50,13 +50,6 @@ const TIMELINE_LIMIT = 1000;
 const ASK_NEWS_TOP_K = 8;
 const ASK_NEWS_USER_STORAGE_KEY = "globe_news_user_id";
 const IST_OFFSET_MINUTES = 5 * 60 + 30;
-const ASK_AI_PROTOTYPE_NOTICE = {
-  title: "Prototype preview",
-  body:
-    "Ask AI is in testing phase and not fully launched yet. For a reliable test run, select 23/06/2026 and any timeline slot.",
-  tag: "Testing phase",
-  date: "23/06/2026",
-} as const;
 
 type Coordinates = {
   lat: number;
@@ -1881,18 +1874,6 @@ export default function MapView() {
                 >
                   <span className="location-card-close-icon" aria-hidden="true" />
                 </button>
-              </div>
-            </div>
-
-            <div className="ask-news-notice" role="note" aria-label="Ask AI prototype notice">
-              <div className="ask-news-notice-copy">
-                <span className="ask-news-notice-tag">{ASK_AI_PROTOTYPE_NOTICE.tag}</span>
-                <strong>{ASK_AI_PROTOTYPE_NOTICE.title}</strong>
-                <p>{ASK_AI_PROTOTYPE_NOTICE.body}</p>
-              </div>
-              <div className="ask-news-notice-date">
-                <span>Test date</span>
-                <strong>{ASK_AI_PROTOTYPE_NOTICE.date}</strong>
               </div>
             </div>
 
