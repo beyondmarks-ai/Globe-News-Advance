@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import maplibregl, { LngLatLike, Map, Marker, Popup } from "maplibre-gl";
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import LocationSearch, { SearchResult } from "@/components/LocationSearch";
 
@@ -46,6 +47,8 @@ const INITIAL_TIMELINE_MINUTE = 15;
 const TIMELINE_STEP_MINUTES = 15;
 const TIMELINE_STEP_MILLISECONDS = TIMELINE_STEP_MINUTES * 60 * 1000;
 const TIMELINE_LIMIT = 1000;
+const ASK_NEWS_TOP_K = 8;
+const ASK_NEWS_USER_STORAGE_KEY = "globe_news_user_id";
 const IST_OFFSET_MINUTES = 5 * 60 + 30;
 
 type Coordinates = {
@@ -59,6 +62,9 @@ type SelectedLocation = {
   source?: string;
   url?: string;
   tone?: number;
+  newsId?: string;
+  hasEmbedding?: boolean;
+  aiReady?: boolean;
 };
 
 type ArticleDetails = {
@@ -73,6 +79,7 @@ type ArticleDetails = {
 };
 
 type ArticleLoadState = "idle" | "loading" | "ready" | "error";
+type AskNewsLoadState = "idle" | "loading" | "error";
 
 type Basemap = "dark" | "satellite";
 
@@ -106,6 +113,12 @@ type TimelineNewsFeatureProperties = {
   aiReady: boolean;
   pulseReady: number;
   pulseStrength: number;
+};
+
+type AskNewsMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
 };
 
 type TimelineNewsFeatureCollection = GeoJSON.FeatureCollection<
@@ -248,7 +261,66 @@ function readTimelineFeature(feature: maplibregl.MapGeoJSONFeature | undefined) 
     source: properties.source,
     url: properties.url,
     tone: typeof properties.tone === "number" ? properties.tone : Number(properties.tone),
+    newsId: typeof properties.id === "string" ? properties.id : String(properties.id ?? ""),
+    hasEmbedding: readApiBoolean(properties.hasEmbedding),
+    aiReady: readApiBoolean(properties.aiReady),
   };
+}
+
+function formatAskNewsTimestamp(date: string, time: string) {
+  return `${date.replaceAll("-", "")}${time.replace(":", "")}00`;
+}
+
+function hashString(value: string) {
+  let hash = 5381;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(index);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function getAskNewsUserId() {
+  if (typeof window === "undefined") {
+    return "user";
+  }
+
+  const storedUserId = window.localStorage.getItem(ASK_NEWS_USER_STORAGE_KEY);
+
+  if (storedUserId) {
+    return storedUserId;
+  }
+
+  const generatedUserId = `user_${hashString(`${window.navigator.userAgent}_${Date.now()}`)}`;
+  window.localStorage.setItem(ASK_NEWS_USER_STORAGE_KEY, generatedUserId);
+
+  return generatedUserId;
+}
+
+function createAskNewsSessionId(userId: string, timestamp: string, url: string) {
+  return `${userId}_${timestamp}_${hashString(url)}`;
+}
+
+function readAskNewsAnswer(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const directAnswer = record.answer ?? record.response ?? record.message ?? record.result;
+
+  if (typeof directAnswer === "string") {
+    return directAnswer;
+  }
+
+  if (directAnswer && typeof directAnswer === "object") {
+    const nested = directAnswer as Record<string, unknown>;
+    const nestedAnswer = nested.answer ?? nested.response ?? nested.message ?? nested.text;
+    return typeof nestedAnswer === "string" ? nestedAnswer : null;
+  }
+
+  return null;
 }
 
 function applyBorderColors(map: Map) {
@@ -508,6 +580,11 @@ export default function MapView() {
   const [articleDetails, setArticleDetails] = useState<ArticleDetails | null>(null);
   const [articleLoadState, setArticleLoadState] = useState<ArticleLoadState>("idle");
   const [articleError, setArticleError] = useState("");
+  const [isAskNewsOpen, setIsAskNewsOpen] = useState(false);
+  const [askNewsQuestion, setAskNewsQuestion] = useState("");
+  const [askNewsMessages, setAskNewsMessages] = useState<AskNewsMessage[]>([]);
+  const [askNewsLoadState, setAskNewsLoadState] = useState<AskNewsLoadState>("idle");
+  const [askNewsError, setAskNewsError] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("en-US");
   const [timelineStatus, setTimelineStatus] = useState("Loading up to 1,000 timeline points...");
   const [timelineNewsCount, setTimelineNewsCount] = useState<number | null>(null);
@@ -527,6 +604,15 @@ export default function MapView() {
     formatTimelineTime(timelineHour * 60 + index * TIMELINE_STEP_MINUTES),
   );
   const isRightToLeftArticle = speechLanguage === "ur-PK" || speechLanguage === "ar-SA";
+  const canAskNews = Boolean(detailLocation?.source && detailLocation.hasEmbedding && detailLocation.aiReady);
+
+  const resetAskNewsChat = useCallback(() => {
+    setIsAskNewsOpen(false);
+    setAskNewsQuestion("");
+    setAskNewsMessages([]);
+    setAskNewsLoadState("idle");
+    setAskNewsError("");
+  }, []);
 
   useEffect(() => {
     function closeHistoricalMachine(event: PointerEvent) {
@@ -737,6 +823,7 @@ export default function MapView() {
         if (selectedNewsLocation) {
           popupRef.current?.remove();
           popupRef.current = null;
+          resetAskNewsChat();
           setDetailLocation(selectedNewsLocation);
           void loadArticleDetails(selectedNewsLocation.url, selectedLanguageRef.current);
           return;
@@ -782,7 +869,7 @@ export default function MapView() {
       map.remove();
       mapRef.current = null;
     };
-  }, [loadArticleDetails]);
+  }, [loadArticleDetails, resetAskNewsChat]);
 
   useEffect(() => {
     if (!isTimelineInitialized) {
@@ -866,6 +953,7 @@ export default function MapView() {
     setArticleDetails(null);
     setArticleError("");
     setArticleLoadState("idle");
+    resetAskNewsChat();
 
     map?.flyTo({
       center: [lng, lat],
@@ -874,6 +962,76 @@ export default function MapView() {
     });
 
     void selectCoordinates(lng, lat, result.placeName, true);
+  }
+
+  async function submitAskNewsQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!detailLocation || !canAskNews || askNewsLoadState === "loading") {
+      return;
+    }
+
+    const question = askNewsQuestion.trim();
+
+    if (!question) {
+      return;
+    }
+
+    setAskNewsMessages((messages) => [
+      ...messages,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: question,
+      },
+    ]);
+    setAskNewsQuestion("");
+    setAskNewsError("");
+    setAskNewsLoadState("loading");
+
+    try {
+      const timestamp = formatAskNewsTimestamp(activeTimelineDate, activeTimelineTime);
+      const sessionId = createAskNewsSessionId(
+        getAskNewsUserId(),
+        timestamp,
+        detailLocation.url ?? detailLocation.newsId ?? detailLocation.placeName,
+      );
+      const response = await fetch("/api/ask-news", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question,
+          date: activeTimelineDate,
+          timestamp,
+          top_k: ASK_NEWS_TOP_K,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to ask AI about this news.");
+      }
+
+      const answer = readAskNewsAnswer(payload);
+
+      if (!answer) {
+        throw new Error("The AI response did not include an answer.");
+      }
+
+      setAskNewsMessages((messages) => [
+        ...messages,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: answer,
+        },
+      ]);
+      setAskNewsLoadState("idle");
+    } catch (error) {
+      setAskNewsError(error instanceof Error ? error.message : "Unable to ask AI about this news.");
+      setAskNewsLoadState("error");
+    }
   }
 
   function speakNewsSummary() {
@@ -1054,6 +1212,7 @@ export default function MapView() {
                     setDetailLocation(null);
                     setArticleDetails(null);
                     setArticleLoadState("idle");
+                    resetAskNewsChat();
                   }}
                 >
                   <span className="location-card-close-icon" aria-hidden="true" />
@@ -1129,6 +1288,7 @@ export default function MapView() {
                   setDetailLocation(null);
                   setArticleDetails(null);
                   setArticleLoadState("idle");
+                  resetAskNewsChat();
                 }}
               >
                 <span className="location-card-close-icon" aria-hidden="true" />
@@ -1188,6 +1348,20 @@ export default function MapView() {
             </div>
           </div>
 
+          {canAskNews ? (
+            <div className="ask-news-entry">
+              <button
+                className={`ask-news-button ${isAskNewsOpen ? "is-active" : ""}`}
+                type="button"
+                aria-expanded={isAskNewsOpen}
+                onClick={() => setIsAskNewsOpen((isOpen) => !isOpen)}
+              >
+                <span className="ask-news-button-icon" aria-hidden="true" />
+                <span>Ask AI</span>
+              </button>
+            </div>
+          ) : null}
+
           <a
             className="location-card-action"
             href={
@@ -1200,6 +1374,59 @@ export default function MapView() {
             {detailLocation.url ? "Open source" : "Open location"}
           </a>
         </section>
+      ) : null}
+
+      {detailLocation && canAskNews && isAskNewsOpen ? (
+        <div className="ask-news-modal-backdrop" role="presentation">
+          <section className="ask-news-panel" role="dialog" aria-modal="true" aria-label="Ask AI about this news">
+            <div className="ask-news-header">
+              <div>
+                <span>News assistant</span>
+                <strong>{articleDetails?.title ?? detailLocation.placeName}</strong>
+              </div>
+              <button
+                className="ask-news-panel-close"
+                type="button"
+                aria-label="Close news assistant"
+                onClick={() => setIsAskNewsOpen(false)}
+              >
+                <span className="location-card-close-icon" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="ask-news-messages" aria-live="polite">
+              {askNewsMessages.length === 0 ? (
+                <div className="ask-news-empty">
+                  Ask a question about this article, related stories, background, timeline, or impact.
+                </div>
+              ) : (
+                askNewsMessages.map((message) => (
+                  <div className={`ask-news-message is-${message.role}`} key={message.id}>
+                    {message.content}
+                  </div>
+                ))
+              )}
+              {askNewsLoadState === "loading" ? (
+                <div className="ask-news-message is-assistant is-loading">Searching related news and preparing an answer.</div>
+              ) : null}
+            </div>
+
+            {askNewsError ? <div className="ask-news-error">{askNewsError}</div> : null}
+
+            <form className="ask-news-form" onSubmit={submitAskNewsQuestion}>
+              <input
+                type="text"
+                value={askNewsQuestion}
+                placeholder="Ask about this news..."
+                aria-label="Question for news AI"
+                onChange={(event) => setAskNewsQuestion(event.target.value)}
+              />
+              <button type="submit" disabled={!askNewsQuestion.trim() || askNewsLoadState === "loading"}>
+                Send
+              </button>
+            </form>
+          </section>
+        </div>
       ) : null}
     </main>
   );

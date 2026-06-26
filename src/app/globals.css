@@ -1166,6 +1166,272 @@ button {
   background: rgba(0, 255, 138, 0.08);
 }
 
+.ask-news-entry {
+  padding: 0 16px 12px;
+}
+
+.ask-news-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 255, 138, 0.34);
+  border-radius: 9px;
+  background: rgba(0, 255, 138, 0.08);
+  color: #eafff5;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.ask-news-button::after {
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle, rgba(0, 255, 138, 0.18), transparent 54%);
+  content: "";
+  opacity: 0;
+  transform: scale(0.6);
+  animation: ask-news-ripple 1.8s ease-out infinite;
+}
+
+.ask-news-button > span {
+  position: relative;
+  z-index: 1;
+}
+
+.ask-news-button-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #00ff8a;
+  box-shadow: 0 0 18px rgba(0, 255, 138, 0.8);
+}
+
+.ask-news-button:hover,
+.ask-news-button.is-active {
+  border-color: rgba(0, 255, 138, 0.62);
+  background: rgba(0, 255, 138, 0.14);
+  transform: translateY(-1px);
+}
+
+.ask-news-button:focus-visible {
+  outline: 2px solid rgba(0, 255, 138, 0.72);
+  outline-offset: 2px;
+}
+
+@keyframes ask-news-ripple {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.45);
+  }
+
+  72% {
+    opacity: 0;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+.ask-news-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(4px);
+  padding: 24px;
+}
+
+.ask-news-panel {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(360px, 1fr) auto auto;
+  gap: 18px;
+  width: min(1080px, calc(100vw - 48px));
+  height: min(780px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid rgba(106, 255, 158, 0.34);
+  border-radius: 20px;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.1)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.34)),
+    url("/bg.png");
+  background-position: center;
+  background-size: cover;
+  padding: 26px;
+  box-shadow:
+    0 30px 100px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.ask-news-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid rgba(127, 148, 172, 0.18);
+  padding-bottom: 16px;
+}
+
+.ask-news-header div {
+  display: grid;
+  gap: 3px;
+  max-width: min(720px, calc(100% - 56px));
+}
+
+.ask-news-header span {
+  color: #00ff8a;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.ask-news-header strong {
+  color: #eef7f2;
+  font-size: 22px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.72);
+}
+
+.ask-news-panel-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(127, 148, 172, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeb7c2;
+  cursor: pointer;
+}
+
+.ask-news-panel-close:hover {
+  border-color: rgba(0, 255, 138, 0.42);
+  color: #ffffff;
+}
+
+.ask-news-messages {
+  display: grid;
+  align-content: start;
+  gap: 11px;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 4px 2px 0;
+  scrollbar-width: none;
+}
+
+.ask-news-messages::-webkit-scrollbar {
+  display: none;
+}
+
+.ask-news-empty,
+.ask-news-message {
+  border-radius: 10px;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ask-news-empty {
+  max-width: 560px;
+  border: 1px solid rgba(106, 255, 158, 0.18);
+  background: rgba(0, 0, 0, 0.4);
+  color: #e3edf7;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3);
+}
+
+.ask-news-message {
+  width: fit-content;
+  max-width: min(76%, 720px);
+  white-space: pre-wrap;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+}
+
+.ask-news-message.is-user {
+  justify-self: end;
+  border: 1px solid rgba(0, 255, 138, 0.22);
+  background: rgba(0, 80, 46, 0.76);
+  color: #effff7;
+}
+
+.ask-news-message.is-assistant {
+  justify-self: start;
+  border: 1px solid rgba(127, 148, 172, 0.22);
+  background: rgba(0, 0, 0, 0.64);
+  color: #f0f6ff;
+}
+
+.ask-news-message.is-loading {
+  color: #b9c7d6;
+}
+
+.ask-news-error {
+  color: #ff8a94;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.ask-news-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  border-top: 1px solid rgba(127, 148, 172, 0.16);
+  padding-top: 16px;
+}
+
+.ask-news-form input {
+  min-width: 0;
+  height: 54px;
+  border: 1px solid rgba(127, 148, 172, 0.28);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #ffffff;
+  font-size: 14px;
+  outline: none;
+  padding: 0 14px;
+}
+
+.ask-news-form input:focus {
+  border-color: rgba(0, 255, 138, 0.52);
+  box-shadow: 0 0 0 2px rgba(0, 255, 138, 0.08);
+}
+
+.ask-news-form button {
+  min-width: 86px;
+  height: 54px;
+  border: 1px solid rgba(0, 255, 138, 0.38);
+  border-radius: 12px;
+  background: rgba(0, 255, 138, 0.12);
+  color: #eafff5;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ask-news-form button:disabled {
+  border-color: rgba(127, 148, 172, 0.18);
+  background: rgba(255, 255, 255, 0.035);
+  color: #708090;
+  cursor: not-allowed;
+}
+
 .grid-news-page {
   min-height: 100vh;
   overflow: auto;
@@ -2105,5 +2371,31 @@ button {
 
   .location-card-header h1 {
     font-size: 14px;
+  }
+
+  .ask-news-modal-backdrop {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .ask-news-panel {
+    width: 100%;
+    height: calc(100vh - 24px);
+    border-radius: 15px;
+    grid-template-rows: auto minmax(220px, 1fr) auto auto;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .ask-news-header strong {
+    font-size: 16px;
+  }
+
+  .ask-news-form {
+    grid-template-columns: 1fr;
+  }
+
+  .ask-news-form button {
+    width: 100%;
   }
 }
