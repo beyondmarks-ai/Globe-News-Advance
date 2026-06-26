@@ -50,6 +50,13 @@ const TIMELINE_LIMIT = 1000;
 const ASK_NEWS_TOP_K = 8;
 const ASK_NEWS_USER_STORAGE_KEY = "globe_news_user_id";
 const IST_OFFSET_MINUTES = 5 * 60 + 30;
+const ASK_AI_PROTOTYPE_NOTICE = {
+  title: "Prototype preview",
+  body:
+    "Ask AI is in testing phase and not fully launched yet. For a reliable test run, select 23/06/2026 and any timeline slot.",
+  tag: "Testing phase",
+  date: "23/06/2026",
+} as const;
 
 type Coordinates = {
   lat: number;
@@ -703,6 +710,7 @@ export default function MapView() {
   const [askNewsError, setAskNewsError] = useState("");
   const [voiceNewsLoadState, setVoiceNewsLoadState] = useState<VoiceNewsLoadState>("idle");
   const [voiceNewsStatus, setVoiceNewsStatus] = useState("");
+  const [isPrototypeNoticeOpen, setIsPrototypeNoticeOpen] = useState(true);
   const [speechLanguage, setSpeechLanguage] = useState("en-US");
   const [timelineStatus, setTimelineStatus] = useState("Loading up to 1,000 timeline points...");
   const [timelineNewsCount, setTimelineNewsCount] = useState<number | null>(null);
@@ -1496,6 +1504,44 @@ export default function MapView() {
 
   return (
     <main className="map-shell">
+      {isPrototypeNoticeOpen ? (
+        <div className="prototype-notice-backdrop" role="presentation">
+          <section className="prototype-notice-panel" role="dialog" aria-modal="true" aria-label="Ask AI prototype notice">
+            <div className="prototype-notice-header">
+              <div className="prototype-notice-heading">
+                <span className="prototype-notice-eyebrow">Prototype preview</span>
+                <h2>Ask AI is in testing phase</h2>
+              </div>
+              <button
+                className="prototype-notice-close"
+                type="button"
+                aria-label="Close prototype notice"
+                onClick={() => setIsPrototypeNoticeOpen(false)}
+              >
+                <span className="location-card-close-icon" aria-hidden="true" />
+              </button>
+            </div>
+
+            <p className="prototype-notice-body">
+              Ask AI is a prototype and our developers are working on it. It is still in testing phase and
+              not fully launched yet. For testing, select date <strong>23/06/2026</strong> and any timeline
+              slot. The assistant will then use the selected news context.
+            </p>
+
+            <div className="prototype-notice-footer">
+              <div className="prototype-notice-pill">Testing phase</div>
+              <button
+                className="prototype-notice-action"
+                type="button"
+                onClick={() => setIsPrototypeNoticeOpen(false)}
+              >
+                Continue
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <div ref={mapContainerRef} className="map-canvas" aria-label="Interactive OSIRIS map" />
 
       <section className="news-count-card" aria-label="News available on globe" aria-live="polite">
@@ -1835,6 +1881,18 @@ export default function MapView() {
                 >
                   <span className="location-card-close-icon" aria-hidden="true" />
                 </button>
+              </div>
+            </div>
+
+            <div className="ask-news-notice" role="note" aria-label="Ask AI prototype notice">
+              <div className="ask-news-notice-copy">
+                <span className="ask-news-notice-tag">{ASK_AI_PROTOTYPE_NOTICE.tag}</span>
+                <strong>{ASK_AI_PROTOTYPE_NOTICE.title}</strong>
+                <p>{ASK_AI_PROTOTYPE_NOTICE.body}</p>
+              </div>
+              <div className="ask-news-notice-date">
+                <span>Test date</span>
+                <strong>{ASK_AI_PROTOTYPE_NOTICE.date}</strong>
               </div>
             </div>
 
